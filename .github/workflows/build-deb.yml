@@ -1,0 +1,75 @@
+name: Build Debian Package
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build binary
+        env:
+          GOOS: linux
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: 0
+        run: |
+          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o logcatool
+
+      - name: Build Debian Package
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          mkdir -p debian/DEBIAN
+          mkdir -p debian/usr/bin
+          
+          cp logcatool debian/usr/bin/
+          
+          cat > debian/DEBIAN/control << EOF
+      Package: logcatool
+      Version: ${VERSION}
+      Section: utils
+      Priority: optional
+      Architecture: ${{ matrix.arch }}
+      Maintainer: simley <your-email@example.com>
+      Description: 终端版 Android Logcat 查看器
+       基于 Bubble Tea 构建的终端版 Android Logcat 查看器，
+       支持实时日志流、日志文件读取、搜索过滤等功能。
+      EOF
+          
+          dpkg-deb --build debian logcatool_${VERSION}_${{ matrix.arch }}.deb
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: logcatool-deb-${{ matrix.arch }}
+          path: '*.deb'
+
+  release-deb:
+    needs: build-deb
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: debs
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: debs/*.deb
+          generate_release_notes: true

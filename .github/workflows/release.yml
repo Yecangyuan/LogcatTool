@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+            suffix: darwin_amd64
+          - goos: darwin
+            goarch: arm64
+            suffix: darwin_arm64
+          - goos: linux
+            goarch: amd64
+            suffix: linux_amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux_arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o logcatool
+          tar -czf logcatool_${{ github.ref_name }}_${{ matrix.suffix }}.tar.gz logcatool
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: logcatool-${{ matrix.suffix }}
+          path: logcatool_${{ github.ref_name }}_${{ matrix.suffix }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
+
+  update-homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Homebrew Tap
+        uses: actions/checkout@v4
+        with:
+          repository: simley/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Download release artifacts
+        run: |
+          mkdir -p dist
+          cd dist
+          curl -sL https://api.github.com/repos/simley/logcatool/releases/latest | \
+            jq -r '.assets[].browser_download_url' | xargs -I {} curl -sL -O {}
+
+      - name: Calculate SHA256 checksums
+        id: checksums
+        run: |
+          cd dist
+          for file in *.tar.gz; do
+            echo "$(shasum -a 256 $file | cut -d' ' -f1)  $file"
+          done > checksums.txt
+          cat checksums.txt
+
+      - name: Update Formula
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          
+          DARWIN_AMD64_SHA=$(grep "darwin_amd64" dist/checksums.txt | cut -d' ' -f1)
+          DARWIN_ARM64_SHA=$(grep "darwin_arm64" dist/checksums.txt | cut -d' ' -f1)
+          LINUX_AMD64_SHA=$(grep "linux_amd64" dist/checksums.txt | cut -d' ' -f1)
+          LINUX_ARM64_SHA=$(grep "linux_arm64" dist/checksums.txt | cut -d' ' -f1)
+          
+          cat > homebrew-tap/Formula/logcatool.rb << EOF
+      class Logcatool < Formula
+        desc "终端版 Android Logcat 查看器，基于 Bubble Tea 构建"
+        homepage "https://github.com/simley/logcatool"
+        version "${VERSION}"
+      
+        if OS.mac? && Hardware::CPU.intel?
+          url "https://github.com/simley/logcatool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_darwin_amd64.tar.gz"
+          sha256 "${DARWIN_AMD64_SHA}"
+        elsif OS.mac? && Hardware::CPU.arm?
+          url "https://github.com/simley/logcatool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_darwin_arm64.tar.gz"
+          sha256 "${DARWIN_ARM64_SHA}"
+        elsif OS.linux? && Hardware::CPU.intel?
+          url "https://github.com/simley/logcatool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_linux_amd64.tar.gz"
+          sha256 "${LINUX_AMD64_SHA}"
+        elsif OS.linux? && Hardware::CPU.arm?
+          url "https://github.com/simley/logcatool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_linux_arm64.tar.gz"
+          sha256 "${LINUX_ARM64_SHA}"
+        end
+      
+        def install
+          bin.install "logcatool"
+        end
+      
+        test do
+          system "#{bin}/logcatool", "-v"
+        end
+      end
+      EOF
+
+      - name: Push to Homebrew Tap
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/logcatool.rb
+          git diff --cached --quiet || (git commit -m "Update logcatool to ${{ github.ref_name }}" && git push)
