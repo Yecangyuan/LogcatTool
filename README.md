@@ -2,7 +2,7 @@
 
 终端版 Android Logcat 查看器，基于 [Bubble Tea](https://github.com/charmbracelet/bubbletea) 构建。
 
-![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)
+![截图](./pic/pic.png)
 
 ## 功能
 
