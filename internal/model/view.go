@@ -38,6 +38,9 @@ func (m AppModel) View() tea.View {
 	if m.inputMode == ModeDevicePicker {
 		content = m.overlayDevicePicker(content)
 	}
+	if m.inputMode == ModePkgPicker {
+		content = m.overlayPkgPicker(content)
+	}
 
 	v.SetContent(content)
 	if m.inputMode >= ModeSearch && m.inputMode <= ModePidFilter {
@@ -166,7 +169,7 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("\n  过滤:\n")
 	sb.WriteString("    /           搜索 (支持正则)\n")
 	sb.WriteString("    t           Tag 过滤\n")
-	sb.WriteString("    p           包名过滤\n")
+	sb.WriteString("    p           包名过滤 (下拉选择)\n")
 	sb.WriteString("    i           PID 过滤\n")
 	sb.WriteString("    1-6         切换日志级别 V/D/I/W/E/F\n")
 	sb.WriteString("\n  操作:\n")
@@ -207,6 +210,74 @@ func (m AppModel) overlayDevicePicker(bg string) string {
 	picker := ui.DevicePickerStyle.Render(sb.String())
 
 	// Center the picker overlay
+	pickerW := lipgloss.Width(picker)
+	pickerH := lipgloss.Height(picker)
+	x := (m.width - pickerW) / 2
+	y := (m.height - pickerH) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+
+	return placeOverlay(x, y, picker, bg)
+}
+
+func (m AppModel) overlayPkgPicker(bg string) string {
+	maxVisible := 15
+	var sb strings.Builder
+
+	sb.WriteString(ui.HelpTitleStyle.Render("选择应用包名") + "\n")
+
+	// Search input display
+	searchDisplay := m.pkgPickerSearch
+	if searchDisplay == "" {
+		searchDisplay = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("输入过滤...")
+	}
+	sb.WriteString(fmt.Sprintf("  🔍 %s\n\n", searchDisplay))
+
+	if len(m.filteredPackages) == 0 {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  没有匹配的应用"))
+		sb.WriteString("\n")
+	} else {
+		// Calculate visible window
+		startIdx := 0
+		if m.pkgPickerIdx >= maxVisible {
+			startIdx = m.pkgPickerIdx - maxVisible + 1
+		}
+		endIdx := startIdx + maxVisible
+		if endIdx > len(m.filteredPackages) {
+			endIdx = len(m.filteredPackages)
+		}
+
+		if startIdx > 0 {
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  ▲ 更多...\n"))
+		}
+
+		for i := startIdx; i < endIdx; i++ {
+			pkg := m.filteredPackages[i]
+			cursor := "  "
+			if i == m.pkgPickerIdx {
+				cursor = "▸ "
+				sb.WriteString(ui.DeviceSelectedStyle.Render(cursor + pkg))
+			} else {
+				sb.WriteString(ui.DeviceNormalStyle.Render(cursor + pkg))
+			}
+			sb.WriteString("\n")
+		}
+
+		if endIdx < len(m.filteredPackages) {
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  ▼ 更多...\n"))
+		}
+
+		sb.WriteString(fmt.Sprintf("\n  %d/%d", m.pkgPickerIdx+1, len(m.filteredPackages)))
+	}
+
+	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter确认 Esc取消 输入搜索"))
+
+	picker := ui.DevicePickerStyle.Render(sb.String())
+
 	pickerW := lipgloss.Width(picker)
 	pickerH := lipgloss.Height(picker)
 	x := (m.width - pickerW) / 2

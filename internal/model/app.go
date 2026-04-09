@@ -28,6 +28,7 @@ const (
 	ModePkgFilter
 	ModePidFilter
 	ModeDevicePicker
+	ModePkgPicker
 )
 
 type AppModel struct {
@@ -62,6 +63,12 @@ type AppModel struct {
 
 	filePath     string // non-empty when reading from file
 	presetSerial string // preset device serial from CLI
+
+	// Package picker state
+	allPackages      []string // all packages from device
+	filteredPackages []string // filtered by search input
+	pkgPickerIdx     int      // cursor in filtered list
+	pkgPickerSearch  string   // current search text
 }
 
 // --- Messages ---
@@ -77,6 +84,8 @@ type DeviceListMsg []adb.Device
 type PackagePIDMsg map[string][]int
 
 type ExportDoneMsg struct{ Path string }
+
+type PackageListMsg []string
 
 type SourceStartedMsg struct {
 	Source  source.LogSource
@@ -149,6 +158,16 @@ func exportLogsCmd(entries []*logentry.Entry) tea.Cmd {
 			return LogErrorMsg{Err: fmt.Errorf("导出失败: %w", err)}
 		}
 		return ExportDoneMsg{Path: filename}
+	}
+}
+
+func listPackagesCmd(adbPath, serial string) tea.Cmd {
+	return func() tea.Msg {
+		pkgs, err := adb.ListPackages(adbPath, serial)
+		if err != nil {
+			return LogErrorMsg{Err: err}
+		}
+		return PackageListMsg(pkgs)
 	}
 }
 

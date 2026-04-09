@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 )
 
@@ -89,4 +90,32 @@ func GetPackagePIDs(adbPath, serial string) (map[string][]int, error) {
 		result[name] = append(result[name], pid)
 	}
 	return result, nil
+}
+
+// ListPackages returns installed package names from the device via pm list packages.
+func ListPackages(adbPath, serial string) ([]string, error) {
+	args := []string{}
+	if serial != "" {
+		args = append(args, "-s", serial)
+	}
+	args = append(args, "shell", "pm", "list", "packages")
+
+	out, err := exec.Command(adbPath, args...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("adb shell pm list packages 失败: %w", err)
+	}
+
+	var packages []string
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		line := scanner.Text()
+		pkg := strings.TrimPrefix(line, "package:")
+		pkg = strings.TrimSpace(pkg)
+		if pkg != "" {
+			packages = append(packages, pkg)
+		}
+	}
+
+	sort.Strings(packages)
+	return packages, nil
 }

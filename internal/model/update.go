@@ -98,6 +98,15 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case PackagePIDMsg:
 		m.filter.PIDsByPkg = map[string][]int(msg)
 
+	case PackageListMsg:
+		pkgs := []string(msg)
+		m.allPackages = append([]string{"(清除过滤)"}, pkgs...)
+		m.filteredPackages = m.allPackages
+		m.pkgPickerIdx = 0
+		m.pkgPickerSearch = ""
+		m.inputMode = ModePkgPicker
+		m.statusMsg = fmt.Sprintf("共 %d 个应用", len(pkgs))
+
 	case ExportDoneMsg:
 		m.statusMsg = fmt.Sprintf("已导出到 %s", msg.Path)
 
@@ -119,6 +128,8 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.inputMode {
 	case ModeDevicePicker:
 		return m.handleDevicePickerKey(msg)
+	case ModePkgPicker:
+		return m.handlePkgPickerKey(msg)
 	case ModeSearch, ModeTagFilter, ModePkgFilter, ModePidFilter:
 		return m.handleFilterInputKey(msg)
 	}
@@ -169,11 +180,16 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.PkgFilter):
-		m.inputMode = ModePkgFilter
-		m.filterInput.Placeholder = "输入包名..."
-		m.filterInput.SetValue(m.filter.Package)
-		m.filterInput.Focus()
-		return m, nil
+		if m.filePath != "" {
+			m.statusMsg = "文件模式不支持包名过滤"
+			return m, nil
+		}
+		serial := ""
+		if m.deviceIdx < len(m.devices) {
+			serial = m.devices[m.deviceIdx].Serial
+		}
+		m.statusMsg = "正在获取应用列表..."
+		return m, listPackagesCmd(m.adbPath, serial)
 
 	case key.Matches(msg, m.keys.PidFilter):
 		m.inputMode = ModePidFilter
@@ -296,6 +312,77 @@ func (m AppModel) handleDevicePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Cancel):
+		m.inputMode = ModeNormal
+		return m, nil
+
+	case key.Matches(msg, m.keys.Quit):
+		m.inputMode = ModeNormal
+		return m, nil
+
+	case key.Matches(msg, m.keys.Up):
+		if m.pkgPickerIdx > 0 {
+			m.pkgPickerIdx--
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.Down):
+		if m.pkgPickerIdx < len(m.filteredPackages)-1 {
+			m.pkgPickerIdx++
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.Confirm):
+		if len(m.filteredPackages) > 0 && m.pkgPickerIdx < len(m.filteredPackages) {
+			selected := m.filteredPackages[m.pkgPickerIdx]
+			if selected == "(清除过滤)" {
+				m.filter.Package = ""
+				m.statusMsg = "已清除包名过滤"
+			} else {
+				m.filter.Package = selected
+				m.statusMsg = fmt.Sprintf("包名过滤: %s", selected)
+			}
+			m.inputMode = ModeNormal
+			m.refilter()
+		} else {
+			m.inputMode = ModeNormal
+		}
+		return m, nil
+
+	default:
+		// Handle typing for fuzzy search
+		k := msg.String()
+		if k == "backspace" {
+			if len(m.pkgPickerSearch) > 0 {
+				m.pkgPickerSearch = m.pkgPickerSearch[:len(m.pkgPickerSearch)-1]
+			}
+		} else if len(k) == 1 && k[0] >= 0x20 && k[0] <= 0x7e {
+			m.pkgPickerSearch += k
+		} else {
+			return m, nil
+		}
+		m.filterPackageList()
+		return m, nil
+	}
+}
+
+func (m *AppModel) filterPackageList() {
+	if m.pkgPickerSearch == "" {
+		m.filteredPackages = m.allPackages
+	} else {
+		search := strings.ToLower(m.pkgPickerSearch)
+		m.filteredPackages = nil
+		for _, pkg := range m.allPackages {
+			if strings.Contains(strings.ToLower(pkg), search) {
+				m.filteredPackages = append(m.filteredPackages, pkg)
+			}
+		}
+	}
+	m.pkgPickerIdx = 0
 }
 
 func (m AppModel) handleFilterInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
