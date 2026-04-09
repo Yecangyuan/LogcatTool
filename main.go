@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/simley/logcatool/internal/adb"
-	"github.com/simley/logcatool/internal/model"
+	"github.com/Yecangyuan/LogcatTool/internal/adb"
+	"github.com/Yecangyuan/LogcatTool/internal/model"
 
 	tea "charm.land/bubbletea/v2"
 )

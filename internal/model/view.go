@@ -5,8 +5,8 @@ import (
 	"image/color"
 	"strings"
 
-	"github.com/simley/logcatool/internal/logentry"
-	"github.com/simley/logcatool/internal/ui"
+	"github.com/Yecangyuan/LogcatTool/internal/logentry"
+	"github.com/Yecangyuan/LogcatTool/internal/ui"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"

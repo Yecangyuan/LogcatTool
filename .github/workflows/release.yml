@@ -81,7 +81,7 @@ jobs:
         run: |
           mkdir -p dist
           cd dist
-          curl -sL https://api.github.com/repos/simley/logcatool/releases/latest | \
+          curl -sL https://api.github.com/repos/Yecangyuan/LogcatTool/releases/latest | \
             jq -r '.assets[].browser_download_url' | xargs -I {} curl -sL -O {}
 
       - name: Calculate SHA256 checksums
@@ -105,20 +105,20 @@ jobs:
           cat > homebrew-tap/Formula/logcatool.rb << EOF
       class Logcatool < Formula
         desc "终端版 Android Logcat 查看器，基于 Bubble Tea 构建"
-        homepage "https://github.com/simley/logcatool"
+        homepage "https://github.com/Yecangyuan/LogcatTool"
         version "${VERSION}"
       
         if OS.mac? && Hardware::CPU.intel?
-          url "https://github.com/simley/logcatool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_darwin_amd64.tar.gz"
+          url "https://github.com/Yecangyuan/LogcatTool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_darwin_amd64.tar.gz"
           sha256 "${DARWIN_AMD64_SHA}"
         elsif OS.mac? && Hardware::CPU.arm?
-          url "https://github.com/simley/logcatool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_darwin_arm64.tar.gz"
+          url "https://github.com/Yecangyuan/LogcatTool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_darwin_arm64.tar.gz"
           sha256 "${DARWIN_ARM64_SHA}"
         elsif OS.linux? && Hardware::CPU.intel?
-          url "https://github.com/simley/logcatool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_linux_amd64.tar.gz"
+          url "https://github.com/Yecangyuan/LogcatTool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_linux_amd64.tar.gz"
           sha256 "${LINUX_AMD64_SHA}"
         elsif OS.linux? && Hardware::CPU.arm?
-          url "https://github.com/simley/logcatool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_linux_arm64.tar.gz"
+          url "https://github.com/Yecangyuan/LogcatTool/releases/download/${GITHUB_REF_NAME}/logcatool_${GITHUB_REF_NAME}_linux_arm64.tar.gz"
           sha256 "${LINUX_ARM64_SHA}"
         end
       

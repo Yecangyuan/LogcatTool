@@ -21,12 +21,12 @@
 ## 安装
 
 ```bash
-go install github.com/simley/logcatool@latest
+go install github.com/Yecangyuan/LogcatTool@latest
 ```
 
 或从源码构建：
 ```bash
-git clone https://github.com/simley/logcatool.git
+git clone https://github.com/Yecangyuan/LogcatTool.git
 cd logcatool
 go build -o logcatool .
 ```

@@ -6,7 +6,7 @@ import (
 	"os"
 	"sync"
 
-	"github.com/simley/logcatool/internal/logentry"
+	"github.com/Yecangyuan/LogcatTool/internal/logentry"
 )
 
 type FileSource struct {

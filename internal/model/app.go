@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/simley/logcatool/internal/adb"
-	"github.com/simley/logcatool/internal/logentry"
-	"github.com/simley/logcatool/internal/ringbuf"
-	"github.com/simley/logcatool/internal/source"
+	"github.com/Yecangyuan/LogcatTool/internal/adb"
+	"github.com/Yecangyuan/LogcatTool/internal/logentry"
+	"github.com/Yecangyuan/LogcatTool/internal/ringbuf"
+	"github.com/Yecangyuan/LogcatTool/internal/source"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/textinput"

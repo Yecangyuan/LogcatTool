@@ -1,4 +1,4 @@
-module github.com/simley/logcatool
+module github.com/Yecangyuan/LogcatTool
 
 go 1.25.1
 

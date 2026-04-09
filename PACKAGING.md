@@ -82,8 +82,8 @@ sudo ./scripts/setup-apt-repo.sh
 
 ```bash
 # 下载发布的 .deb 包
-wget https://github.com/simley/logcatool/releases/download/v0.1.0/logcatool_0.1.0_amd64.deb
-wget https://github.com/simley/logcatool/releases/download/v0.1.0/logcatool_0.1.0_arm64.deb
+wget https://github.com/Yecangyuan/LogcatTool/releases/download/v0.1.0/logcatool_0.1.0_amd64.deb
+wget https://github.com/Yecangyuan/LogcatTool/releases/download/v0.1.0/logcatool_0.1.0_arm64.deb
 
 # 添加到仓库
 reprepro -b /var/www/apt includedeb stable logcatool_0.1.0_amd64.deb
@@ -140,7 +140,7 @@ Priority: optional
 Maintainer: simley <your-email@example.com>
 Build-Depends: debhelper (>= 11), golang-go (>= 1.25)
 Standards-Version: 4.1.4
-Homepage: https://github.com/simley/logcatool
+Homepage: https://github.com/Yecangyuan/LogcatTool
 
 Package: logcatool
 Architecture: any
@@ -155,7 +155,7 @@ Description: 终端版 Android Logcat 查看器
 ```makefile
 #!/usr/bin/make -f
 
-export DH_GOPKG := github.com/simley/logcatool
+export DH_GOPKG := github.com/Yecangyuan/LogcatTool
 export GO111MODULE := on
 
 %:
@@ -290,11 +290,11 @@ snapcraft upload --release=stable logcatool_0.1.0_amd64.snap
 {
   "version": "0.1.0",
   "description": "终端版 Android Logcat 查看器",
-  "homepage": "https://github.com/simley/logcatool",
+  "homepage": "https://github.com/Yecangyuan/LogcatTool",
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/simley/logcatool/releases/download/v0.1.0/logcatool_0.1.0_windows_amd64.zip",
+      "url": "https://github.com/Yecangyuan/LogcatTool/releases/download/v0.1.0/logcatool_0.1.0_windows_amd64.zip",
       "hash": "sha256_hash_here"
     }
   },

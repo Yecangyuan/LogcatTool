@@ -3,8 +3,8 @@ package source
 import (
 	"context"
 
-	"github.com/simley/logcatool/internal/adb"
-	"github.com/simley/logcatool/internal/logentry"
+	"github.com/Yecangyuan/LogcatTool/internal/adb"
+	"github.com/Yecangyuan/LogcatTool/internal/logentry"
 )
 
 type ADBSource struct {
