@@ -13,7 +13,6 @@ import (
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/textinput"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -30,6 +29,47 @@ const (
 	ModeDevicePicker
 	ModePkgPicker
 )
+
+// Logcat buffer types
+type LogcatBuffer int
+
+const (
+	BufferAll LogcatBuffer = iota
+	BufferMain
+	BufferSystem
+	BufferCrash
+	BufferEvents
+)
+
+func (b LogcatBuffer) String() string {
+	switch b {
+	case BufferMain:
+		return "main"
+	case BufferSystem:
+		return "system"
+	case BufferCrash:
+		return "crash"
+	case BufferEvents:
+		return "events"
+	default:
+		return "all"
+	}
+}
+
+func (b LogcatBuffer) Label() string {
+	switch b {
+	case BufferMain:
+		return "Main"
+	case BufferSystem:
+		return "System"
+	case BufferCrash:
+		return "Crash"
+	case BufferEvents:
+		return "Events"
+	default:
+		return "All"
+	}
+}
 
 type AppModel struct {
 	allEntries *ringbuf.RingBuffer[*logentry.Entry]
@@ -51,7 +91,10 @@ type AppModel struct {
 	showHelp      bool
 	inputMode     InputMode
 
-	viewport    viewport.Model
+	// Virtual scroll state (replaces viewport)
+	scrollOffset int // index of first visible entry in filtered
+	viewHeight   int // number of visible log lines
+
 	filterInput textinput.Model
 	helpModel   help.Model
 	keys        KeyMap
@@ -65,10 +108,17 @@ type AppModel struct {
 	presetSerial string // preset device serial from CLI
 
 	// Package picker state
-	allPackages      []string // all packages from device
-	filteredPackages []string // filtered by search input
-	pkgPickerIdx     int      // cursor in filtered list
-	pkgPickerSearch  string   // current search text
+	allPackages      []string
+	filteredPackages []string
+	pkgPickerIdx     int
+	pkgPickerSearch  string
+
+	// Logcat buffer selection
+	logBuffer LogcatBuffer
+
+	// Auto-reconnect
+	reconnecting  bool
+	reconnectSecs int
 }
 
 // --- Messages ---
@@ -86,6 +136,10 @@ type PackagePIDMsg map[string][]int
 type ExportDoneMsg struct{ Path string }
 
 type PackageListMsg []string
+
+type ClearDeviceDoneMsg struct{}
+
+type ReconnectTickMsg struct{}
 
 type SourceStartedMsg struct {
 	Source  source.LogSource
@@ -171,6 +225,19 @@ func listPackagesCmd(adbPath, serial string) tea.Cmd {
 	}
 }
 
+func clearDeviceCmd(adbPath, serial string) tea.Cmd {
+	return func() tea.Msg {
+		_ = adb.ClearLogcat(adbPath, serial)
+		return ClearDeviceDoneMsg{}
+	}
+}
+
+func reconnectTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return ReconnectTickMsg{}
+	})
+}
+
 // --- Constructor ---
 
 type Options struct {
@@ -201,6 +268,7 @@ func New(opts Options) AppModel {
 		bookmarks:    make(map[int]bool),
 		filePath:     opts.FilePath,
 		presetSerial: opts.Serial,
+		logBuffer:    BufferAll,
 	}
 }
 

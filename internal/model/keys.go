@@ -25,6 +25,8 @@ type KeyMap struct {
 	PrevBookmark key.Binding
 	WrapToggle   key.Binding
 	AutoScroll   key.Binding
+	BufferSelect key.Binding
+	CopyLine     key.Binding
 	Help         key.Binding
 	Confirm      key.Binding
 	Cancel       key.Binding
@@ -126,6 +128,14 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("s"),
 			key.WithHelp("s", "自动滚动"),
 		),
+		BufferSelect: key.NewBinding(
+			key.WithKeys("B"),
+			key.WithHelp("B", "切换缓冲区"),
+		),
+		CopyLine: key.NewBinding(
+			key.WithKeys("y"),
+			key.WithHelp("y", "复制当前行"),
+		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
 			key.WithHelp("?", "帮助"),
@@ -174,8 +184,8 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
 		{k.Search, k.TagFilter, k.PkgFilter, k.PidFilter},
 		{k.LevelV, k.LevelD, k.LevelI, k.LevelW, k.LevelE, k.LevelF},
-		{k.Pause, k.Clear, k.DevicePicker, k.Export},
-		{k.Bookmark, k.NextBookmark, k.PrevBookmark},
+		{k.Pause, k.Clear, k.DevicePicker, k.Export, k.BufferSelect},
+		{k.Bookmark, k.NextBookmark, k.PrevBookmark, k.CopyLine},
 		{k.WrapToggle, k.AutoScroll, k.Help, k.Quit},
 	}
 }

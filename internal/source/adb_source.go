@@ -14,9 +14,9 @@ type ADBSource struct {
 	device adb.Device
 }
 
-func NewADBSource(adbPath string, device adb.Device) *ADBSource {
+func NewADBSource(adbPath string, device adb.Device, buffer string) *ADBSource {
 	return &ADBSource{
-		reader: adb.NewLogcatReader(adbPath, device.Serial),
+		reader: adb.NewLogcatReader(adbPath, device.Serial, buffer),
 		device: device,
 	}
 }

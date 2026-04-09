@@ -12,6 +12,16 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
+var crashStyle = lipgloss.NewStyle().
+	Background(lipgloss.Color("52")).
+	Foreground(lipgloss.Color("196")).
+	Bold(true)
+
+var searchHighlightStyle = lipgloss.NewStyle().
+	Background(lipgloss.Color("214")).
+	Foreground(lipgloss.Color("0")).
+	Bold(true)
+
 func (m AppModel) View() tea.View {
 	var v tea.View
 	v.AltScreen = true
@@ -30,7 +40,7 @@ func (m AppModel) View() tea.View {
 	var sections []string
 	sections = append(sections, m.renderTitleBar())
 	sections = append(sections, m.renderFilterBar())
-	sections = append(sections, m.viewport.View())
+	sections = append(sections, m.renderLogView())
 	sections = append(sections, m.renderStatusBar())
 
 	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
@@ -53,6 +63,141 @@ func (m AppModel) View() tea.View {
 	return v
 }
 
+// renderLogView renders only the visible entries via virtual scroll.
+func (m AppModel) renderLogView() string {
+	if m.viewHeight <= 0 {
+		return ""
+	}
+
+	n := len(m.filtered)
+	if n == 0 {
+		emptyMsg := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			Render("  暂无日志...")
+		padLines := m.viewHeight - 1
+		if padLines < 0 {
+			padLines = 0
+		}
+		return emptyMsg + strings.Repeat("\n", padLines)
+	}
+
+	start := m.scrollOffset
+	end := start + m.viewHeight
+	if end > n {
+		end = n
+	}
+
+	var sb strings.Builder
+	hasSearch := m.filter.SearchRe != nil || m.filter.SearchText != ""
+
+	for i := start; i < end; i++ {
+		entry := m.filtered[i]
+
+		var line string
+		if entry.IsCrash {
+			line = m.renderCrashLine(entry)
+		} else if hasSearch {
+			line = m.highlightSearchInLine(entry)
+		} else {
+			line = entry.RenderedBase
+		}
+
+		// Bookmark marker
+		if m.bookmarks[entry.Index] {
+			line = bookmarkMarker + " " + line
+		}
+
+		// Truncate or pad to terminal width
+		if !m.wrapLines && m.width > 0 {
+			lineWidth := lipgloss.Width(line)
+			if lineWidth > m.width {
+				line = truncateToWidth(line, m.width)
+			}
+		}
+
+		sb.WriteString(line)
+		if i < end-1 {
+			sb.WriteByte('\n')
+		}
+	}
+
+	// Pad remaining lines if fewer visible entries than viewHeight
+	rendered := end - start
+	if rendered < m.viewHeight {
+		for i := 0; i < m.viewHeight-rendered; i++ {
+			sb.WriteByte('\n')
+		}
+	}
+
+	return sb.String()
+}
+
+func (m AppModel) renderCrashLine(e *logentry.Entry) string {
+	ts := e.Timestamp.Format("15:04:05.000")
+	line := fmt.Sprintf("%-12s %5d %5d %s %-20s  %s",
+		ts, e.PID, e.TID, e.Level.Char(), truncTag(e.Tag, 20), e.Message)
+	return crashStyle.Render(line)
+}
+
+func (m AppModel) highlightSearchInLine(e *logentry.Entry) string {
+	if m.filter.SearchRe != nil {
+		raw := e.RenderedBase
+		// For regex search, highlight in the message portion
+		// Since RenderedBase is styled, we re-render with highlights
+		ts := e.Timestamp.Format("15:04:05.000")
+		prefix := fmt.Sprintf("%-12s %5d %5d %s %-20s  ",
+			ts, e.PID, e.TID, e.Level.Char(), truncTag(e.Tag, 20))
+
+		msg := e.Message
+		highlighted := m.filter.SearchRe.ReplaceAllStringFunc(msg, func(match string) string {
+			return searchHighlightStyle.Render(match)
+		})
+
+		if highlighted != msg {
+			style := levelStyle(e.Level)
+			return style.Render(prefix) + highlighted
+		}
+		return raw
+	}
+
+	if m.filter.SearchText != "" {
+		ts := e.Timestamp.Format("15:04:05.000")
+		prefix := fmt.Sprintf("%-12s %5d %5d %s %-20s  ",
+			ts, e.PID, e.TID, e.Level.Char(), truncTag(e.Tag, 20))
+
+		msg := e.Message
+		highlighted := highlightSubstring(msg, m.filter.SearchText)
+		if highlighted != msg {
+			style := levelStyle(e.Level)
+			return style.Render(prefix) + highlighted
+		}
+		return e.RenderedBase
+	}
+
+	return e.RenderedBase
+}
+
+// highlightSubstring highlights all case-insensitive occurrences of substr in s.
+func highlightSubstring(s, substr string) string {
+	lower := strings.ToLower(s)
+	lowerSub := strings.ToLower(substr)
+	subLen := len(lowerSub)
+
+	var sb strings.Builder
+	pos := 0
+	for {
+		idx := strings.Index(lower[pos:], lowerSub)
+		if idx < 0 {
+			sb.WriteString(s[pos:])
+			break
+		}
+		sb.WriteString(s[pos : pos+idx])
+		sb.WriteString(searchHighlightStyle.Render(s[pos+idx : pos+idx+subLen]))
+		pos += idx + subLen
+	}
+	return sb.String()
+}
+
 func (m AppModel) renderTitleBar() string {
 	title := ui.TitleStyle.Render(" LogCaTool ")
 
@@ -65,9 +210,18 @@ func (m AppModel) renderTitleBar() string {
 		deviceInfo = " 未连接"
 	}
 
+	// Show buffer selection
+	if m.filePath == "" {
+		deviceInfo += fmt.Sprintf(" [%s]", m.logBuffer.Label())
+	}
+
 	var status string
 	if m.paused {
 		status = ui.PausedStyle.Render(" ⏸ 暂停 ")
+	}
+	if m.reconnecting {
+		status += lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Render(
+			fmt.Sprintf(" 🔄 %ds ", m.reconnectSecs))
 	}
 
 	left := title + deviceInfo
@@ -94,15 +248,12 @@ func (m AppModel) renderFilterBar() string {
 		num := fmt.Sprintf("%d", i+1)
 		char := level.Char()
 		if level == m.filter.MinLevel {
-			// Currently selected minimum level
 			style := ui.LevelBtnActiveStyle.Foreground(levelColor(level))
 			parts = append(parts, style.Render(fmt.Sprintf("[%s:%s]", num, char)))
 		} else if m.filter.IsLevelEnabled(level) {
-			// Levels above minimum (included)
 			style := lipgloss.NewStyle().Foreground(levelColor(level))
 			parts = append(parts, style.Render(fmt.Sprintf(" %s:%s ", num, char)))
 		} else {
-			// Levels below minimum (excluded)
 			parts = append(parts, ui.LevelBtnInactiveStyle.Render(fmt.Sprintf("[%s:%s]", num, char)))
 		}
 	}
@@ -137,6 +288,21 @@ func (m AppModel) renderFilterBar() string {
 
 func (m AppModel) renderStatusBar() string {
 	left := fmt.Sprintf(" 总计:%d  显示:%d", m.totalCount, m.filteredCount)
+
+	// Scroll indicator
+	if len(m.filtered) > 0 && m.viewHeight > 0 {
+		pct := 0
+		maxOffset := len(m.filtered) - m.viewHeight
+		if maxOffset > 0 {
+			pct = (m.scrollOffset * 100) / maxOffset
+			if pct > 100 {
+				pct = 100
+			}
+		} else {
+			pct = 100
+		}
+		left += fmt.Sprintf("  行:%d/%d (%d%%)", m.scrollOffset+1, len(m.filtered), pct)
+	}
 
 	if m.autoScroll {
 		left += "  ▼自动滚动"
@@ -182,11 +348,13 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    1-6         选择最低日志级别 V/D/I/W/E/F\n")
 	sb.WriteString("\n  操作:\n")
 	sb.WriteString("    Space       暂停/恢复日志流\n")
-	sb.WriteString("    c           清除日志\n")
+	sb.WriteString("    c           清除日志 (同时清除设备缓冲区)\n")
 	sb.WriteString("    d           选择设备\n")
 	sb.WriteString("    e           导出日志\n")
 	sb.WriteString("    b           添加/移除书签\n")
 	sb.WriteString("    n/N         下一个/上一个书签\n")
+	sb.WriteString("    y           复制当前行到剪贴板\n")
+	sb.WriteString("    B           切换日志缓冲区\n")
 	sb.WriteString("    w           切换换行模式\n")
 	sb.WriteString("    s           切换自动滚动\n")
 	sb.WriteString("    ?           显示/隐藏帮助\n")
@@ -217,7 +385,6 @@ func (m AppModel) overlayDevicePicker(bg string) string {
 
 	picker := ui.DevicePickerStyle.Render(sb.String())
 
-	// Center the picker overlay
 	pickerW := lipgloss.Width(picker)
 	pickerH := lipgloss.Height(picker)
 	x := (m.width - pickerW) / 2
@@ -238,7 +405,6 @@ func (m AppModel) overlayPkgPicker(bg string) string {
 
 	sb.WriteString(ui.HelpTitleStyle.Render("选择应用包名") + "\n")
 
-	// Search input display
 	searchDisplay := m.pkgPickerSearch
 	if searchDisplay == "" {
 		searchDisplay = lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("输入过滤...")
@@ -249,7 +415,6 @@ func (m AppModel) overlayPkgPicker(bg string) string {
 		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  没有匹配的应用"))
 		sb.WriteString("\n")
 	} else {
-		// Calculate visible window
 		startIdx := 0
 		if m.pkgPickerIdx >= maxVisible {
 			startIdx = m.pkgPickerIdx - maxVisible + 1
@@ -316,7 +481,6 @@ func placeOverlay(x, y int, overlay, bg string) string {
 		if x >= bgWidth {
 			bgLines[row] = bgLine + strings.Repeat(" ", x-bgWidth) + line
 		} else {
-			// Overwrite: take left part + overlay + right part
 			left := truncateToWidth(bgLine, x)
 			rightStart := x + overlayWidth
 			right := ""

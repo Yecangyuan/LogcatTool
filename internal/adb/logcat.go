@@ -14,16 +14,18 @@ import (
 type LogcatReader struct {
 	adbPath string
 	serial  string
+	buffer  string
 	cmd     *exec.Cmd
 	cancel  context.CancelFunc
 	mu      sync.Mutex
 	running bool
 }
 
-func NewLogcatReader(adbPath, serial string) *LogcatReader {
+func NewLogcatReader(adbPath, serial, buffer string) *LogcatReader {
 	return &LogcatReader{
 		adbPath: adbPath,
 		serial:  serial,
+		buffer:  buffer,
 	}
 }
 
@@ -83,6 +85,9 @@ func (r *LogcatReader) buildArgs() []string {
 		args = append(args, "-s", r.serial)
 	}
 	args = append(args, "logcat", "-v", "threadtime")
+	if r.buffer != "" && r.buffer != "all" {
+		args = append(args, "-b", r.buffer)
+	}
 	return args
 }
 

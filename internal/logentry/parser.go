@@ -1,29 +1,108 @@
 package logentry
 
 import (
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// threadtime 格式: "04-09 10:42:01.234  1234  5678 D MyTag   : message"
-var threadtimeRe = regexp.MustCompile(
-	`^(\d{2}-\d{2})\s+(\d{2}:\d{2}:\d{2}\.\d{3})\s+(\d+)\s+(\d+)\s+([VDIWEFS])\s+(.+?)\s*:\s(.*)$`,
-)
+var currentYear = strconv.Itoa(time.Now().Year())
 
 func Parse(line string) *Entry {
-	m := threadtimeRe.FindStringSubmatch(line)
-	if m == nil {
+	n := len(line)
+	if n < 20 {
 		return nil
 	}
 
-	ts := parseTimestamp(m[1], m[2])
-	pid, _ := strconv.Atoi(m[3])
-	tid, _ := strconv.Atoi(m[4])
-	level := ParseLevel(m[5][0])
-	tag := strings.TrimSpace(m[6])
-	msg := m[7]
+	i := 0
+	// Skip leading whitespace
+	for i < n && line[i] == ' ' {
+		i++
+	}
+
+	// Date: MM-DD (5 chars)
+	if i+5 > n || line[i+2] != '-' {
+		return nil
+	}
+	if !isDigit(line[i]) || !isDigit(line[i+1]) || !isDigit(line[i+3]) || !isDigit(line[i+4]) {
+		return nil
+	}
+	date := line[i : i+5]
+	i += 5
+
+	if i >= n || line[i] != ' ' {
+		return nil
+	}
+	for i < n && line[i] == ' ' {
+		i++
+	}
+
+	// Time: HH:MM:SS.mmm (12 chars)
+	if i+12 > n {
+		return nil
+	}
+	timeStr := line[i : i+12]
+	if timeStr[2] != ':' || timeStr[5] != ':' || timeStr[8] != '.' {
+		return nil
+	}
+	i += 12
+
+	for i < n && line[i] == ' ' {
+		i++
+	}
+
+	// PID (digits)
+	pidStart := i
+	for i < n && isDigit(line[i]) {
+		i++
+	}
+	if i == pidStart {
+		return nil
+	}
+	pid := fastAtoi(line[pidStart:i])
+
+	for i < n && line[i] == ' ' {
+		i++
+	}
+
+	// TID (digits)
+	tidStart := i
+	for i < n && isDigit(line[i]) {
+		i++
+	}
+	if i == tidStart {
+		return nil
+	}
+	tid := fastAtoi(line[tidStart:i])
+
+	for i < n && line[i] == ' ' {
+		i++
+	}
+
+	// Level (single char)
+	if i >= n {
+		return nil
+	}
+	level := ParseLevel(line[i])
+	if level == LevelUnknown {
+		return nil
+	}
+	i++
+
+	for i < n && line[i] == ' ' {
+		i++
+	}
+
+	// Tag : Message
+	rest := line[i:]
+	colonIdx := strings.Index(rest, ": ")
+	if colonIdx < 0 {
+		return nil
+	}
+	tag := strings.TrimRight(rest[:colonIdx], " ")
+	msg := rest[colonIdx+2:]
+
+	ts := parseTimestampFast(date, timeStr)
 
 	return &Entry{
 		Timestamp: ts,
@@ -36,12 +115,28 @@ func Parse(line string) *Entry {
 	}
 }
 
-func parseTimestamp(date, timeStr string) time.Time {
-	now := time.Now()
-	ref := strconv.Itoa(now.Year()) + "-" + date + " " + timeStr
-	t, err := time.ParseInLocation("2006-01-02 15:04:05.000", ref, time.Local)
-	if err != nil {
-		return time.Time{}
+func isDigit(c byte) bool {
+	return c >= '0' && c <= '9'
+}
+
+func fastAtoi(s string) int {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		n = n*10 + int(s[i]-'0')
 	}
-	return t
+	return n
+}
+
+func parseTimestampFast(date, timeStr string) time.Time {
+	month := fastAtoi(date[0:2])
+	day := fastAtoi(date[3:5])
+	hour := fastAtoi(timeStr[0:2])
+	min := fastAtoi(timeStr[3:5])
+	sec := fastAtoi(timeStr[6:8])
+	msec := fastAtoi(timeStr[9:12])
+
+	return time.Date(
+		time.Now().Year(), time.Month(month), day,
+		hour, min, sec, msec*1e6, time.Local,
+	)
 }

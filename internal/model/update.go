@@ -10,7 +10,6 @@ import (
 	"github.com/Yecangyuan/LogcatTool/internal/source"
 
 	"charm.land/bubbles/v2/key"
-	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -24,17 +23,9 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.helpModel.SetWidth(msg.Width)
-		if !m.ready {
-			m.viewport = viewport.New(
-				viewport.WithWidth(msg.Width),
-				viewport.WithHeight(m.viewportHeight()),
-			)
-			m.ready = true
-			m.rebuildContent()
-		} else {
-			m.viewport.SetWidth(msg.Width)
-			m.viewport.SetHeight(m.viewportHeight())
-		}
+		m.viewHeight = m.calcViewHeight()
+		m.ready = true
+		m.clampScroll()
 
 	case SourceStartedMsg:
 		if m.source != nil {
@@ -43,6 +34,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.source = msg.Source
 		m.entryChan = msg.Entries
 		m.errorChan = msg.Errors
+		m.reconnecting = false
 		m.statusMsg = "已连接"
 		cmds = append(cmds, waitForEntries(m.entryChan))
 
@@ -51,15 +43,19 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			for _, entry := range msg {
 				entry.Index = m.totalCount
 				m.totalCount++
+				m.preRenderEntry(entry)
 				m.allEntries.Push(entry)
 				if m.filter.Match(entry) {
 					m.filtered = append(m.filtered, entry)
 				}
 			}
 			m.filteredCount = len(m.filtered)
-			m.rebuildContent()
+			// Prune filtered list if ring buffer overflowed
+			if m.totalCount > m.allEntries.Cap() && len(m.filtered) > m.allEntries.Cap()*2 {
+				m.refilter()
+			}
 			if m.autoScroll {
-				m.viewport.GotoBottom()
+				m.scrollToBottom()
 			}
 		}
 		if m.entryChan != nil {
@@ -67,7 +63,31 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case LogStreamEndedMsg:
-		m.statusMsg = "日志流已结束"
+		if m.filePath == "" && !m.reconnecting {
+			m.reconnecting = true
+			m.reconnectSecs = 3
+			m.statusMsg = fmt.Sprintf("连接断开，%d秒后重连...", m.reconnectSecs)
+			cmds = append(cmds, reconnectTickCmd())
+		} else {
+			m.statusMsg = "日志流已结束"
+		}
+
+	case ReconnectTickMsg:
+		if m.reconnecting {
+			m.reconnectSecs--
+			if m.reconnectSecs <= 0 {
+				m.reconnecting = false
+				m.statusMsg = "正在重连..."
+				if m.deviceIdx < len(m.devices) {
+					cmds = append(cmds, m.connectDevice(m.devices[m.deviceIdx]))
+				} else {
+					cmds = append(cmds, listDevicesCmd(m.adbPath))
+				}
+			} else {
+				m.statusMsg = fmt.Sprintf("连接断开，%d秒后重连...", m.reconnectSecs)
+				cmds = append(cmds, reconnectTickCmd())
+			}
+		}
 
 	case LogErrorMsg:
 		m.statusMsg = fmt.Sprintf("错误: %v", msg.Err)
@@ -107,17 +127,28 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.inputMode = ModePkgPicker
 		m.statusMsg = fmt.Sprintf("共 %d 个应用", len(pkgs))
 
+	case ClearDeviceDoneMsg:
+		m.statusMsg = "设备日志缓冲区已清除"
+
 	case ExportDoneMsg:
 		m.statusMsg = fmt.Sprintf("已导出到 %s", msg.Path)
 
+	case tea.MouseWheelMsg:
+		switch msg.Button {
+		case tea.MouseWheelUp:
+			m.scrollOffset -= 3
+			m.autoScroll = false
+			m.clampScroll()
+		case tea.MouseWheelDown:
+			m.scrollOffset += 3
+			m.clampScroll()
+			if m.isAtBottom() {
+				m.autoScroll = true
+			}
+		}
+
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
-	}
-
-	var vpCmd tea.Cmd
-	if m.ready && m.inputMode == ModeNormal {
-		m.viewport, vpCmd = m.viewport.Update(msg)
-		cmds = append(cmds, vpCmd)
 	}
 
 	return m, tea.Batch(cmds...)
@@ -160,9 +191,17 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.filtered = nil
 		m.totalCount = 0
 		m.filteredCount = 0
+		m.scrollOffset = 0
 		m.bookmarks = make(map[int]bool)
-		m.rebuildContent()
 		m.statusMsg = "日志已清除"
+		// Also clear device logcat buffer
+		if m.filePath == "" && m.adbPath != "" {
+			serial := ""
+			if m.deviceIdx < len(m.devices) {
+				serial = m.devices[m.deviceIdx].Serial
+			}
+			return m, clearDeviceCmd(m.adbPath, serial)
+		}
 		return m, nil
 
 	case key.Matches(msg, m.keys.Search):
@@ -231,7 +270,7 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.AutoScroll):
 		m.autoScroll = !m.autoScroll
 		if m.autoScroll {
-			m.viewport.GotoBottom()
+			m.scrollToBottom()
 			m.statusMsg = "自动滚动: 开"
 		} else {
 			m.statusMsg = "自动滚动: 关"
@@ -240,7 +279,6 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.WrapToggle):
 		m.wrapLines = !m.wrapLines
-		m.rebuildContent()
 		if m.wrapLines {
 			m.statusMsg = "换行: 开"
 		} else {
@@ -248,6 +286,76 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case key.Matches(msg, m.keys.BufferSelect):
+		if m.filePath != "" {
+			m.statusMsg = "文件模式不支持切换缓冲区"
+			return m, nil
+		}
+		m.logBuffer = (m.logBuffer + 1) % 5
+		m.statusMsg = fmt.Sprintf("日志缓冲区: %s", m.logBuffer.Label())
+		// Reconnect with new buffer
+		if m.deviceIdx < len(m.devices) {
+			return m, m.connectDevice(m.devices[m.deviceIdx])
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.CopyLine):
+		return m, m.copyCurrentLine()
+
+	// Navigation
+	case key.Matches(msg, m.keys.Up):
+		m.scrollOffset--
+		m.autoScroll = false
+		m.clampScroll()
+		return m, nil
+
+	case key.Matches(msg, m.keys.Down):
+		m.scrollOffset++
+		m.clampScroll()
+		if m.isAtBottom() {
+			m.autoScroll = true
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.PageUp):
+		m.scrollOffset -= m.viewHeight
+		m.autoScroll = false
+		m.clampScroll()
+		return m, nil
+
+	case key.Matches(msg, m.keys.PageDown):
+		m.scrollOffset += m.viewHeight
+		m.clampScroll()
+		if m.isAtBottom() {
+			m.autoScroll = true
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.HalfPageUp):
+		m.scrollOffset -= m.viewHeight / 2
+		m.autoScroll = false
+		m.clampScroll()
+		return m, nil
+
+	case key.Matches(msg, m.keys.HalfPageDown):
+		m.scrollOffset += m.viewHeight / 2
+		m.clampScroll()
+		if m.isAtBottom() {
+			m.autoScroll = true
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.Top):
+		m.scrollOffset = 0
+		m.autoScroll = false
+		return m, nil
+
+	case key.Matches(msg, m.keys.Bottom):
+		m.scrollToBottom()
+		m.autoScroll = true
+		return m, nil
+
+	// Level selection
 	case key.Matches(msg, m.keys.LevelV):
 		m.filter.SetMinLevel(logentry.LevelVerbose)
 		m.refilter()
@@ -280,19 +388,6 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Pass to viewport — track navigation to manage auto-scroll
-	if m.ready {
-		switch {
-		case key.Matches(msg, m.keys.Up), key.Matches(msg, m.keys.PageUp),
-			key.Matches(msg, m.keys.HalfPageUp), key.Matches(msg, m.keys.Top):
-			m.autoScroll = false
-		case key.Matches(msg, m.keys.Bottom):
-			m.autoScroll = true
-		}
-		var cmd tea.Cmd
-		m.viewport, cmd = m.viewport.Update(msg)
-		return m, cmd
-	}
 	return m, nil
 }
 
@@ -361,7 +456,7 @@ func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.inputMode = ModeNormal
 			m.refilter()
-			m.viewport.GotoBottom()
+			m.scrollToBottom()
 			m.autoScroll = false
 		} else {
 			m.inputMode = ModeNormal
@@ -369,7 +464,6 @@ func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	default:
-		// Handle typing for fuzzy search
 		k := msg.String()
 		if k == "backspace" {
 			if len(m.pkgPickerSearch) > 0 {
@@ -442,19 +536,84 @@ func (m *AppModel) refilter() {
 	all := m.allEntries.All()
 	m.filtered = m.filter.ApplyAll(all)
 	m.filteredCount = len(m.filtered)
-	m.rebuildContent()
+	if m.autoScroll {
+		m.scrollToBottom()
+	}
+	m.clampScroll()
 }
 
-func (m *AppModel) rebuildContent() {
-	if !m.ready {
-		return
+// --- Scroll helpers ---
+
+func (m *AppModel) scrollToBottom() {
+	maxOffset := len(m.filtered) - m.viewHeight
+	if maxOffset < 0 {
+		maxOffset = 0
 	}
-	content := renderLogEntries(m.filtered, m.filter, m.bookmarks, m.width)
-	m.viewport.SetContent(content)
+	m.scrollOffset = maxOffset
+}
+
+func (m *AppModel) clampScroll() {
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
+	maxOffset := len(m.filtered) - m.viewHeight
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
+	}
+}
+
+func (m *AppModel) isAtBottom() bool {
+	maxOffset := len(m.filtered) - m.viewHeight
+	if maxOffset < 0 {
+		return true
+	}
+	return m.scrollOffset >= maxOffset
+}
+
+func (m AppModel) calcViewHeight() int {
+	h := m.height - 3 // title(1) + filter(1) + status(1)
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// --- Entry rendering ---
+
+func (m *AppModel) preRenderEntry(e *logentry.Entry) {
+	ts := e.Timestamp.Format("15:04:05.000")
+	line := fmt.Sprintf("%-12s %5d %5d %s %-20s  %s",
+		ts, e.PID, e.TID, e.Level.Char(), truncTag(e.Tag, 20), e.Message)
+	style := levelStyle(e.Level)
+	e.RenderedBase = style.Render(line)
+	e.IsCrash = detectCrash(e)
+}
+
+func truncTag(tag string, maxLen int) string {
+	if len(tag) <= maxLen {
+		return tag
+	}
+	return tag[:maxLen-1] + "…"
+}
+
+func detectCrash(e *logentry.Entry) bool {
+	if e.Level < logentry.LevelError {
+		return false
+	}
+	msg := e.Message
+	tag := e.Tag
+	return strings.Contains(msg, "FATAL EXCEPTION") ||
+		strings.Contains(tag, "AndroidRuntime") ||
+		strings.Contains(msg, "ANR in") ||
+		strings.HasPrefix(msg, "Process:") ||
+		(len(msg) > 0 && msg[0] == '\t' && strings.HasPrefix(msg, "\tat "))
 }
 
 func (m AppModel) connectDevice(dev adb.Device) tea.Cmd {
-	src := source.NewADBSource(m.adbPath, dev)
+	src := source.NewADBSource(m.adbPath, dev, m.logBuffer.String())
 	return tea.Batch(
 		startSourceCmd(src),
 		loadPackagePIDs(m.adbPath, dev.Serial),
@@ -462,19 +621,17 @@ func (m AppModel) connectDevice(dev adb.Device) tea.Cmd {
 }
 
 func (m AppModel) toggleBookmark() AppModel {
-	if !m.ready || len(m.filtered) == 0 {
+	if len(m.filtered) == 0 {
 		return m
 	}
-	// Bookmark the entry at the current viewport top line
-	topLine := m.viewport.YOffset()
-	if topLine < len(m.filtered) {
-		idx := m.filtered[topLine].Index
-		if m.bookmarks[idx] {
-			delete(m.bookmarks, idx)
+	idx := m.scrollOffset
+	if idx < len(m.filtered) {
+		entryIdx := m.filtered[idx].Index
+		if m.bookmarks[entryIdx] {
+			delete(m.bookmarks, entryIdx)
 		} else {
-			m.bookmarks[idx] = true
+			m.bookmarks[entryIdx] = true
 		}
-		m.rebuildContent()
 	}
 	return m
 }
@@ -484,91 +641,49 @@ func (m *AppModel) gotoNextBookmark(forward bool) {
 		return
 	}
 
-	current := m.viewport.YOffset()
+	current := m.scrollOffset
 	if forward {
 		for i := current + 1; i < len(m.filtered); i++ {
 			if m.bookmarks[m.filtered[i].Index] {
-				m.viewport.SetYOffset(i)
+				m.scrollOffset = i
+				m.autoScroll = false
 				return
 			}
 		}
-		// Wrap around
 		for i := 0; i <= current; i++ {
 			if m.bookmarks[m.filtered[i].Index] {
-				m.viewport.SetYOffset(i)
+				m.scrollOffset = i
+				m.autoScroll = false
 				return
 			}
 		}
 	} else {
 		for i := current - 1; i >= 0; i-- {
 			if m.bookmarks[m.filtered[i].Index] {
-				m.viewport.SetYOffset(i)
+				m.scrollOffset = i
+				m.autoScroll = false
 				return
 			}
 		}
 		for i := len(m.filtered) - 1; i >= current; i-- {
 			if m.bookmarks[m.filtered[i].Index] {
-				m.viewport.SetYOffset(i)
+				m.scrollOffset = i
+				m.autoScroll = false
 				return
 			}
 		}
 	}
 }
 
-func (m AppModel) viewportHeight() int {
-	h := m.height - 3 // title(1) + filter(1) + status(1)
-	if h < 1 {
-		h = 1
+func (m AppModel) copyCurrentLine() tea.Cmd {
+	if len(m.filtered) == 0 || m.scrollOffset >= len(m.filtered) {
+		return nil
 	}
-	return h
-}
-
-// renderLogEntries builds the viewport content string.
-func renderLogEntries(entries []*logentry.Entry, f *logentry.Filter, bookmarks map[int]bool, width int) string {
-	if len(entries) == 0 {
-		return "  等待日志..."
+	line := m.filtered[m.scrollOffset].Raw
+	return func() tea.Msg {
+		copyToClipboard(line)
+		return nil
 	}
-
-	var b strings.Builder
-	b.Grow(len(entries) * 120)
-
-	for i, e := range entries {
-		if i > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString(renderEntry(e, f, bookmarks[e.Index], width))
-	}
-	return b.String()
-}
-
-func renderEntry(e *logentry.Entry, f *logentry.Filter, bookmarked bool, _ int) string {
-	style := levelStyle(e.Level)
-
-	ts := e.Timestamp.Format("15:04:05.000")
-	line := fmt.Sprintf("%s %5d %5d %s %-20s: %s",
-		ts, e.PID, e.TID, e.Level.Char(), e.Tag, e.Message)
-
-	rendered := style.Render(line)
-
-	if bookmarked {
-		rendered = bookmarkMarker + rendered
-	}
-
-	// Highlight search terms
-	if f != nil && f.SearchRe != nil {
-		rendered = highlightSearch(rendered, f)
-	}
-
-	return rendered
-}
-
-func highlightSearch(line string, f *logentry.Filter) string {
-	if f.SearchRe == nil {
-		return line
-	}
-	// Simple highlight - just return as-is since ANSI-aware replacement is complex
-	// The search match is indicated by the filter bar
-	return line
 }
 
 func levelStyle(l logentry.Level) lipgloss.Style {
