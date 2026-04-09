@@ -249,33 +249,46 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case key.Matches(msg, m.keys.LevelV):
-		m.filter.ToggleLevel(logentry.LevelVerbose)
+		m.filter.SetMinLevel(logentry.LevelVerbose)
 		m.refilter()
+		m.statusMsg = "日志级别: ≥Verbose (全部)"
 		return m, nil
 	case key.Matches(msg, m.keys.LevelD):
-		m.filter.ToggleLevel(logentry.LevelDebug)
+		m.filter.SetMinLevel(logentry.LevelDebug)
 		m.refilter()
+		m.statusMsg = "日志级别: ≥Debug"
 		return m, nil
 	case key.Matches(msg, m.keys.LevelI):
-		m.filter.ToggleLevel(logentry.LevelInfo)
+		m.filter.SetMinLevel(logentry.LevelInfo)
 		m.refilter()
+		m.statusMsg = "日志级别: ≥Info"
 		return m, nil
 	case key.Matches(msg, m.keys.LevelW):
-		m.filter.ToggleLevel(logentry.LevelWarn)
+		m.filter.SetMinLevel(logentry.LevelWarn)
 		m.refilter()
+		m.statusMsg = "日志级别: ≥Warn"
 		return m, nil
 	case key.Matches(msg, m.keys.LevelE):
-		m.filter.ToggleLevel(logentry.LevelError)
+		m.filter.SetMinLevel(logentry.LevelError)
 		m.refilter()
+		m.statusMsg = "日志级别: ≥Error"
 		return m, nil
 	case key.Matches(msg, m.keys.LevelF):
-		m.filter.ToggleLevel(logentry.LevelFatal)
+		m.filter.SetMinLevel(logentry.LevelFatal)
 		m.refilter()
+		m.statusMsg = "日志级别: ≥Fatal"
 		return m, nil
 	}
 
-	// Pass to viewport
+	// Pass to viewport — track navigation to manage auto-scroll
 	if m.ready {
+		switch {
+		case key.Matches(msg, m.keys.Up), key.Matches(msg, m.keys.PageUp),
+			key.Matches(msg, m.keys.HalfPageUp), key.Matches(msg, m.keys.Top):
+			m.autoScroll = false
+		case key.Matches(msg, m.keys.Bottom):
+			m.autoScroll = true
+		}
 		var cmd tea.Cmd
 		m.viewport, cmd = m.viewport.Update(msg)
 		return m, cmd
@@ -348,6 +361,8 @@ func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			m.inputMode = ModeNormal
 			m.refilter()
+			m.viewport.GotoBottom()
+			m.autoScroll = false
 		} else {
 			m.inputMode = ModeNormal
 		}

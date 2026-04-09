@@ -128,15 +128,29 @@ func TestFilterMatch(t *testing.T) {
 		}
 	})
 
-	t.Run("level filter", func(t *testing.T) {
+	t.Run("level filter - MinLevel", func(t *testing.T) {
 		f := NewFilter()
-		f.ToggleLevel(LevelVerbose)
-		f.ToggleLevel(LevelDebug)
-		// After toggling, both should be disabled (others enabled)
-		// Actually after first toggle, all levels are initialized and V is toggled off
-		// After second toggle, D is also toggled off
+		f.SetMinLevel(LevelInfo)
+		// Debug entry should not match when MinLevel is Info
 		if f.Match(entry) {
-			t.Error("debug should not match when disabled")
+			t.Error("debug should not match when MinLevel is Info")
+		}
+		// Info entry should match
+		infoEntry := &Entry{
+			Timestamp: time.Now(),
+			PID:       1234,
+			TID:       5678,
+			Level:     LevelInfo,
+			Tag:       "MyTag",
+			Message:   "info message",
+		}
+		if !f.Match(infoEntry) {
+			t.Error("info should match when MinLevel is Info")
+		}
+		// Verbose shows all
+		f.SetMinLevel(LevelVerbose)
+		if !f.Match(entry) {
+			t.Error("debug should match when MinLevel is Verbose")
 		}
 	})
 

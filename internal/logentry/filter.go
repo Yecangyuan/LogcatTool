@@ -7,7 +7,6 @@ import (
 
 type Filter struct {
 	MinLevel   Level
-	Levels     map[Level]bool // nil means all levels enabled
 	Tag        string
 	PID        int
 	Package    string
@@ -15,6 +14,7 @@ type Filter struct {
 	SearchRe   *regexp.Regexp
 	IsRegex    bool
 	PIDsByPkg  map[string][]int // package name -> PIDs mapping
+	Levels     map[Level]bool   // deprecated: kept for compatibility, unused
 }
 
 func NewFilter() *Filter {
@@ -52,9 +52,6 @@ func (f *Filter) Match(e *Entry) bool {
 }
 
 func (f *Filter) matchLevel(level Level) bool {
-	if f.Levels != nil {
-		return f.Levels[level]
-	}
 	return level >= f.MinLevel
 }
 
@@ -104,29 +101,13 @@ func (f *Filter) SetSearch(text string, isRegex bool) {
 	}
 }
 
-func (f *Filter) SetLevels(levels map[Level]bool) {
-	if len(levels) == 0 {
-		f.Levels = nil
-		return
-	}
-	f.Levels = levels
-}
-
-func (f *Filter) ToggleLevel(level Level) {
-	if f.Levels == nil {
-		f.Levels = make(map[Level]bool)
-		for _, l := range FilterableLevels {
-			f.Levels[l] = true
-		}
-	}
-	f.Levels[level] = !f.Levels[level]
+func (f *Filter) SetMinLevel(level Level) {
+	f.MinLevel = level
+	f.Levels = nil
 }
 
 func (f *Filter) IsLevelEnabled(level Level) bool {
-	if f.Levels == nil {
-		return level >= f.MinLevel
-	}
-	return f.Levels[level]
+	return level >= f.MinLevel
 }
 
 func (f *Filter) IsActive() bool {
@@ -136,12 +117,8 @@ func (f *Filter) IsActive() bool {
 	if f.SearchText != "" || f.SearchRe != nil {
 		return true
 	}
-	if f.Levels != nil {
-		for _, enabled := range f.Levels {
-			if !enabled {
-				return true
-			}
-		}
+	if f.MinLevel > LevelVerbose {
+		return true
 	}
 	return false
 }

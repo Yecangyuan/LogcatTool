@@ -89,14 +89,20 @@ func (m AppModel) renderTitleBar() string {
 func (m AppModel) renderFilterBar() string {
 	var parts []string
 
-	// Level toggles
+	// Level selector (single-select: shows minimum level)
 	for i, level := range logentry.FilterableLevels {
 		num := fmt.Sprintf("%d", i+1)
 		char := level.Char()
-		if m.filter.IsLevelEnabled(level) {
+		if level == m.filter.MinLevel {
+			// Currently selected minimum level
 			style := ui.LevelBtnActiveStyle.Foreground(levelColor(level))
 			parts = append(parts, style.Render(fmt.Sprintf("[%s:%s]", num, char)))
+		} else if m.filter.IsLevelEnabled(level) {
+			// Levels above minimum (included)
+			style := lipgloss.NewStyle().Foreground(levelColor(level))
+			parts = append(parts, style.Render(fmt.Sprintf(" %s:%s ", num, char)))
 		} else {
+			// Levels below minimum (excluded)
 			parts = append(parts, ui.LevelBtnInactiveStyle.Render(fmt.Sprintf("[%s:%s]", num, char)))
 		}
 	}
@@ -134,6 +140,8 @@ func (m AppModel) renderStatusBar() string {
 
 	if m.autoScroll {
 		left += "  ▼自动滚动"
+	} else {
+		left += "  ■手动浏览(G回底部)"
 	}
 	if m.paused {
 		left += "  ⏸暂停中"
@@ -171,7 +179,7 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    t           Tag 过滤\n")
 	sb.WriteString("    p           包名过滤 (下拉选择)\n")
 	sb.WriteString("    i           PID 过滤\n")
-	sb.WriteString("    1-6         切换日志级别 V/D/I/W/E/F\n")
+	sb.WriteString("    1-6         选择最低日志级别 V/D/I/W/E/F\n")
 	sb.WriteString("\n  操作:\n")
 	sb.WriteString("    Space       暂停/恢复日志流\n")
 	sb.WriteString("    c           清除日志\n")
