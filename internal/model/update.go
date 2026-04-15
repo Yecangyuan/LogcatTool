@@ -117,6 +117,12 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PackagePIDMsg:
 		m.filter.PIDsByPkg = map[string][]int(msg)
+		if m.filter.Package != "" {
+			m.refilter()
+			m.scrollToBottom()
+			m.autoScroll = false
+			m.statusMsg = fmt.Sprintf("包名过滤: %s", m.filter.Package)
+		}
 
 	case PackageListMsg:
 		pkgs := []string(msg)
@@ -450,14 +456,19 @@ func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			if selected == "(清除过滤)" {
 				m.filter.Package = ""
 				m.statusMsg = "已清除包名过滤"
-			} else {
-				m.filter.Package = selected
-				m.statusMsg = fmt.Sprintf("包名过滤: %s", selected)
+				m.inputMode = ModeNormal
+				m.refilter()
+				return m, nil
 			}
+			m.filter.Package = selected
+			m.statusMsg = fmt.Sprintf("包名过滤: %s (正在刷新PID...)", selected)
 			m.inputMode = ModeNormal
-			m.refilter()
-			m.scrollToBottom()
-			m.autoScroll = false
+			// Refresh PIDs then refilter when PackagePIDMsg arrives
+			serial := ""
+			if m.deviceIdx < len(m.devices) {
+				serial = m.devices[m.deviceIdx].Serial
+			}
+			return m, loadPackagePIDs(m.adbPath, serial)
 		} else {
 			m.inputMode = ModeNormal
 		}

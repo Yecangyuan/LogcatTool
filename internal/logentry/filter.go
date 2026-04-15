@@ -56,7 +56,7 @@ func (f *Filter) matchLevel(level Level) bool {
 }
 
 func (f *Filter) matchPackage(pid int) bool {
-	if f.PIDsByPkg == nil || f.Package == "" {
+	if len(f.PIDsByPkg) == 0 || f.Package == "" {
 		return true
 	}
 	pids, ok := f.PIDsByPkg[f.Package]

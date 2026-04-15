@@ -68,11 +68,23 @@ func GetPackagePIDs(adbPath, serial string) (map[string][]int, error) {
 	if serial != "" {
 		args = append(args, "-s", serial)
 	}
-	args = append(args, "shell", "ps", "-A", "-o", "PID,NAME")
 
+	// Try modern format first: ps -A -o PID,NAME
+	result := tryPsModern(adbPath, args)
+	if len(result) > 0 {
+		return result, nil
+	}
+
+	// Fallback for older Android: ps (full format)
+	return tryPsLegacy(adbPath, args)
+}
+
+// tryPsModern tries `ps -A -o PID,NAME` (Android 8+).
+func tryPsModern(adbPath string, baseArgs []string) map[string][]int {
+	args := append(append([]string{}, baseArgs...), "shell", "ps", "-A", "-o", "PID,NAME")
 	out, err := exec.Command(adbPath, args...).Output()
 	if err != nil {
-		return nil, fmt.Errorf("adb shell ps 失败: %w", err)
+		return nil
 	}
 
 	result := make(map[string][]int)
@@ -87,6 +99,33 @@ func GetPackagePIDs(adbPath, serial string) (map[string][]int, error) {
 			continue
 		}
 		name := fields[1]
+		result[name] = append(result[name], pid)
+	}
+	return result
+}
+
+// tryPsLegacy parses `ps` output (older Android, 8+ columns: USER PID PPID ... NAME).
+func tryPsLegacy(adbPath string, baseArgs []string) (map[string][]int, error) {
+	args := append(append([]string{}, baseArgs...), "shell", "ps")
+	out, err := exec.Command(adbPath, args...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("adb shell ps 失败: %w", err)
+	}
+
+	result := make(map[string][]int)
+	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 2 {
+			continue
+		}
+		// PID is typically the 2nd column (index 1)
+		var pid int
+		if _, err := fmt.Sscanf(fields[1], "%d", &pid); err != nil {
+			continue
+		}
+		// NAME is the last column
+		name := fields[len(fields)-1]
 		result[name] = append(result[name], pid)
 	}
 	return result, nil
