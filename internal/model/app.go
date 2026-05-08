@@ -72,10 +72,21 @@ func (b LogcatBuffer) Label() string {
 	}
 }
 
+type displayRow struct {
+	Entry *logentry.Entry
+	Count int
+}
+
+type filterPreset struct {
+	Used     bool
+	Snapshot logentry.Snapshot
+}
+
 type AppModel struct {
-	allEntries *ringbuf.RingBuffer[*logentry.Entry]
-	filtered   []*logentry.Entry
-	filter     *logentry.Filter
+	allEntries  *ringbuf.RingBuffer[*logentry.Entry]
+	filtered    []*logentry.Entry
+	displayRows []displayRow
+	filter      *logentry.Filter
 
 	source    source.LogSource
 	entryChan <-chan *logentry.Entry
@@ -90,6 +101,8 @@ type AppModel struct {
 	autoScroll    bool
 	wrapLines     bool
 	showHelp      bool
+	showDetails   bool
+	collapseDupes bool
 	inputMode     InputMode
 
 	// Virtual scroll state (replaces viewport)
@@ -102,6 +115,7 @@ type AppModel struct {
 
 	totalCount    int
 	filteredCount int
+	displayCount  int
 	bookmarks     map[int]bool
 	statusMsg     string
 
@@ -120,6 +134,10 @@ type AppModel struct {
 	// Auto-reconnect
 	reconnecting  bool
 	reconnectSecs int
+
+	// Filter presets
+	activePreset int
+	presetSlots  [3]filterPreset
 }
 
 // --- Messages ---

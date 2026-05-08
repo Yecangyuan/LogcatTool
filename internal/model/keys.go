@@ -17,6 +17,7 @@ type KeyMap struct {
 	PkgFilter    key.Binding
 	ProcFilter   key.Binding
 	PidFilter    key.Binding
+	CrashMode    key.Binding
 	Pause        key.Binding
 	Clear        key.Binding
 	DevicePicker key.Binding
@@ -25,9 +26,15 @@ type KeyMap struct {
 	NextBookmark key.Binding
 	PrevBookmark key.Binding
 	WrapToggle   key.Binding
+	Collapse     key.Binding
+	ToggleDetail key.Binding
 	AutoScroll   key.Binding
 	BufferSelect key.Binding
 	CopyLine     key.Binding
+	PresetPrev   key.Binding
+	PresetNext   key.Binding
+	PresetSave   key.Binding
+	PresetClear  key.Binding
 	Help         key.Binding
 	Confirm      key.Binding
 	Cancel       key.Binding
@@ -97,6 +104,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("i"),
 			key.WithHelp("i", "PID过滤"),
 		),
+		CrashMode: key.NewBinding(
+			key.WithKeys("x"),
+			key.WithHelp("x", "崩溃模式"),
+		),
 		Pause: key.NewBinding(
 			key.WithKeys(" "),
 			key.WithHelp("Space", "暂停/恢复"),
@@ -129,6 +140,14 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("w"),
 			key.WithHelp("w", "换行切换"),
 		),
+		Collapse: key.NewBinding(
+			key.WithKeys("z"),
+			key.WithHelp("z", "重复折叠"),
+		),
+		ToggleDetail: key.NewBinding(
+			key.WithKeys("v"),
+			key.WithHelp("v", "详情面板"),
+		),
 		AutoScroll: key.NewBinding(
 			key.WithKeys("s"),
 			key.WithHelp("s", "自动滚动"),
@@ -140,6 +159,22 @@ func DefaultKeyMap() KeyMap {
 		CopyLine: key.NewBinding(
 			key.WithKeys("y"),
 			key.WithHelp("y", "复制当前行"),
+		),
+		PresetPrev: key.NewBinding(
+			key.WithKeys("["),
+			key.WithHelp("[", "上个预设"),
+		),
+		PresetNext: key.NewBinding(
+			key.WithKeys("]"),
+			key.WithHelp("]", "下个预设"),
+		),
+		PresetSave: key.NewBinding(
+			key.WithKeys("m"),
+			key.WithHelp("m", "保存预设"),
+		),
+		PresetClear: key.NewBinding(
+			key.WithKeys("M"),
+			key.WithHelp("M", "清空预设"),
 		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
@@ -187,10 +222,11 @@ func (k KeyMap) ShortHelp() []key.Binding {
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Search, k.TagFilter, k.PkgFilter, k.ProcFilter, k.PidFilter},
+		{k.Search, k.TagFilter, k.PkgFilter, k.ProcFilter, k.PidFilter, k.CrashMode},
 		{k.LevelV, k.LevelD, k.LevelI, k.LevelW, k.LevelE, k.LevelF},
 		{k.Pause, k.Clear, k.DevicePicker, k.Export, k.BufferSelect},
-		{k.Bookmark, k.NextBookmark, k.PrevBookmark, k.CopyLine},
-		{k.WrapToggle, k.AutoScroll, k.Help, k.Quit},
+		{k.Bookmark, k.NextBookmark, k.PrevBookmark, k.CopyLine, k.ToggleDetail},
+		{k.WrapToggle, k.Collapse, k.AutoScroll, k.PresetPrev, k.PresetNext},
+		{k.PresetSave, k.PresetClear, k.Help, k.Quit},
 	}
 }

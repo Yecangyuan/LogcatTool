@@ -225,6 +225,49 @@ func TestFilterMatch(t *testing.T) {
 		}
 	})
 
+	t.Run("crash only filter", func(t *testing.T) {
+		f := NewFilter()
+		f.CrashOnly = true
+		crashEntry := &Entry{
+			Timestamp: time.Now(),
+			PID:       1234,
+			TID:       5678,
+			Level:     LevelError,
+			Tag:       "AndroidRuntime",
+			Message:   "FATAL EXCEPTION: main",
+			IsCrash:   true,
+		}
+		if !f.Match(crashEntry) {
+			t.Error("crash-only filter should match crash entry")
+		}
+		if f.Match(entry) {
+			t.Error("crash-only filter should reject non-crash entry")
+		}
+	})
+
+	t.Run("snapshot roundtrip", func(t *testing.T) {
+		f := NewFilter()
+		f.SetMinLevel(LevelWarn)
+		f.Tag = "Audio"
+		f.PID = 321
+		f.Package = "com.test.app"
+		f.Process = "remote"
+		f.CrashOnly = true
+		f.SetSearch("fatal", true)
+
+		snap := f.Snapshot()
+		other := NewFilter()
+		other.ApplySnapshot(snap)
+
+		if other.MinLevel != LevelWarn || other.Tag != "Audio" || other.PID != 321 ||
+			other.Package != "com.test.app" || other.Process != "remote" || !other.CrashOnly {
+			t.Error("snapshot should restore scalar filter fields")
+		}
+		if other.SearchText != "fatal" || !other.IsRegex || other.SearchRe == nil {
+			t.Error("snapshot should restore search settings")
+		}
+	})
+
 	t.Run("nil entry", func(t *testing.T) {
 		f := NewFilter()
 		if f.Match(nil) {

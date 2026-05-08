@@ -11,11 +11,23 @@ type Filter struct {
 	PID        int
 	Package    string
 	Process    string
+	CrashOnly  bool
 	SearchText string
 	SearchRe   *regexp.Regexp
 	IsRegex    bool
 	PIDsByPkg  map[string][]int // package/process name -> PIDs mapping
 	Levels     map[Level]bool   // deprecated: kept for compatibility, unused
+}
+
+type Snapshot struct {
+	MinLevel   Level
+	Tag        string
+	PID        int
+	Package    string
+	Process    string
+	CrashOnly  bool
+	SearchText string
+	IsRegex    bool
 }
 
 func NewFilter() *Filter {
@@ -46,6 +58,10 @@ func (f *Filter) Match(e *Entry) bool {
 	}
 
 	if f.Process != "" && !f.matchProcess(e.PID) {
+		return false
+	}
+
+	if f.CrashOnly && !e.IsCrash {
 		return false
 	}
 
@@ -134,7 +150,7 @@ func (f *Filter) IsLevelEnabled(level Level) bool {
 }
 
 func (f *Filter) IsActive() bool {
-	if f.Tag != "" || f.PID > 0 || f.Package != "" || f.Process != "" {
+	if f.Tag != "" || f.PID > 0 || f.Package != "" || f.Process != "" || f.CrashOnly {
 		return true
 	}
 	if f.SearchText != "" || f.SearchRe != nil {
@@ -162,4 +178,27 @@ func (f *Filter) ApplyAll(entries []*Entry) []*Entry {
 		}
 	}
 	return result
+}
+
+func (f *Filter) Snapshot() Snapshot {
+	return Snapshot{
+		MinLevel:   f.MinLevel,
+		Tag:        f.Tag,
+		PID:        f.PID,
+		Package:    f.Package,
+		Process:    f.Process,
+		CrashOnly:  f.CrashOnly,
+		SearchText: f.SearchText,
+		IsRegex:    f.IsRegex,
+	}
+}
+
+func (f *Filter) ApplySnapshot(s Snapshot) {
+	f.MinLevel = s.MinLevel
+	f.Tag = s.Tag
+	f.PID = s.PID
+	f.Package = s.Package
+	f.Process = s.Process
+	f.CrashOnly = s.CrashOnly
+	f.SetSearch(s.SearchText, s.IsRegex)
 }

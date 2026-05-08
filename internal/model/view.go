@@ -22,6 +22,8 @@ var searchHighlightStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("0")).
 	Bold(true)
 
+const detailPaneHeight = 7
+
 func (m AppModel) View() tea.View {
 	var v tea.View
 	v.AltScreen = true
@@ -41,6 +43,9 @@ func (m AppModel) View() tea.View {
 	sections = append(sections, m.renderTitleBar())
 	sections = append(sections, m.renderFilterBar())
 	sections = append(sections, m.renderLogView())
+	if m.showDetails {
+		sections = append(sections, m.renderDetailPane())
+	}
 	sections = append(sections, m.renderStatusBar())
 
 	content := lipgloss.JoinVertical(lipgloss.Left, sections...)
@@ -69,7 +74,7 @@ func (m AppModel) renderLogView() string {
 		return ""
 	}
 
-	n := len(m.filtered)
+	n := len(m.displayRows)
 	if n == 0 {
 		emptyMsg := lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244")).
@@ -91,7 +96,8 @@ func (m AppModel) renderLogView() string {
 	hasSearch := m.filter.SearchRe != nil || m.filter.SearchText != ""
 
 	for i := start; i < end; i++ {
-		entry := m.filtered[i]
+		row := m.displayRows[i]
+		entry := row.Entry
 
 		var line string
 		if entry.IsCrash {
@@ -102,12 +108,14 @@ func (m AppModel) renderLogView() string {
 			line = entry.RenderedBase
 		}
 
-		// Bookmark marker
-		if m.bookmarks[entry.Index] {
-			line = bookmarkMarker + " " + line
+		if row.Count > 1 {
+			line += lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(
+				fmt.Sprintf(" ×%d", row.Count),
+			)
 		}
 
-		// Truncate or pad to terminal width
+		line = rowPrefix(i == m.scrollOffset, m.bookmarks[entry.Index]) + line
+
 		if !m.wrapLines && m.width > 0 {
 			lineWidth := lipgloss.Width(line)
 			if lineWidth > m.width {
@@ -130,6 +138,46 @@ func (m AppModel) renderLogView() string {
 	}
 
 	return sb.String()
+}
+
+func (m AppModel) renderDetailPane() string {
+	width := m.width
+	if width <= 0 {
+		width = 80
+	}
+
+	row := m.currentDisplayRow()
+	if row == nil || row.Entry == nil {
+		return lipgloss.NewStyle().
+			Background(lipgloss.Color("235")).
+			Foreground(lipgloss.Color("244")).
+			Width(width).
+			Height(detailPaneHeight).
+			Render("  详情面板：暂无选中日志")
+	}
+
+	entry := row.Entry
+	header := lipgloss.NewStyle().
+		Background(lipgloss.Color("235")).
+		Foreground(lipgloss.Color("252")).
+		Bold(true).
+		Width(width).
+		Render(fmt.Sprintf("  详情  PID:%d  TID:%d  级别:%s  折叠:%d", entry.PID, entry.TID, entry.Level.Char(), row.Count))
+
+	lines := []string{
+		header,
+		fmt.Sprintf("  时间: %s", entry.Timestamp.Format("2006-01-02 15:04:05.000")),
+		fmt.Sprintf("  Tag : %s", entry.Tag),
+	}
+	lines = append(lines, wrapText("  原始: "+entry.Raw, width, detailPaneHeight-len(lines))...)
+	for len(lines) < detailPaneHeight {
+		lines = append(lines, "")
+	}
+	return lipgloss.NewStyle().
+		Background(lipgloss.Color("235")).
+		Foreground(lipgloss.Color("252")).
+		Width(width).
+		Render(strings.Join(lines[:detailPaneHeight], "\n"))
 }
 
 func (m AppModel) renderCrashLine(e *logentry.Entry) string {
@@ -280,23 +328,29 @@ func (m AppModel) renderFilterBar() string {
 			parts = append(parts, ui.FilterActiveStyle.Render(
 				fmt.Sprintf(" 进程:%s", m.filter.Process)))
 		}
+		if m.filter.CrashOnly {
+			parts = append(parts, ui.FilterActiveStyle.Render(" 崩溃模式"))
+		}
 		if m.filter.PID > 0 {
 			parts = append(parts, ui.FilterActiveStyle.Render(
 				fmt.Sprintf(" PID:%d", m.filter.PID)))
 		}
 	}
+	parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(
+		fmt.Sprintf(" 预设:%d%s", m.activePreset+1, presetMark(m.presetSlots[m.activePreset].Used)),
+	))
 
 	content := strings.Join(parts, " ")
 	return ui.FilterBarStyle.Width(m.width).Render(content)
 }
 
 func (m AppModel) renderStatusBar() string {
-	left := fmt.Sprintf(" 总计:%d  显示:%d", m.totalCount, m.filteredCount)
+	left := fmt.Sprintf(" 总计:%d  匹配:%d  行:%d", m.totalCount, m.filteredCount, m.displayCount)
 
 	// Scroll indicator
-	if len(m.filtered) > 0 && m.viewHeight > 0 {
+	if len(m.displayRows) > 0 && m.viewHeight > 0 {
 		pct := 0
-		maxOffset := len(m.filtered) - m.viewHeight
+		maxOffset := len(m.displayRows) - m.viewHeight
 		if maxOffset > 0 {
 			pct = (m.scrollOffset * 100) / maxOffset
 			if pct > 100 {
@@ -305,7 +359,7 @@ func (m AppModel) renderStatusBar() string {
 		} else {
 			pct = 100
 		}
-		left += fmt.Sprintf("  行:%d/%d (%d%%)", m.scrollOffset+1, len(m.filtered), pct)
+		left += fmt.Sprintf("  位置:%d/%d (%d%%)", m.scrollOffset+1, len(m.displayRows), pct)
 	}
 
 	if m.autoScroll {
@@ -318,6 +372,12 @@ func (m AppModel) renderStatusBar() string {
 	}
 	if len(m.bookmarks) > 0 {
 		left += fmt.Sprintf("  🔖%d", len(m.bookmarks))
+	}
+	if m.collapseDupes {
+		left += "  ⇣折叠"
+	}
+	if m.showDetails {
+		left += "  ◫详情"
 	}
 
 	right := " /:搜索 Space:暂停 ?:帮助 q:退出 "
@@ -350,6 +410,7 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    p           包名过滤 (下拉选择)\n")
 	sb.WriteString("    P           进程名过滤\n")
 	sb.WriteString("    i           PID 过滤\n")
+	sb.WriteString("    x           崩溃模式\n")
 	sb.WriteString("    1-6         选择最低日志级别 V/D/I/W/E/F\n")
 	sb.WriteString("\n  操作:\n")
 	sb.WriteString("    Space       暂停/恢复日志流\n")
@@ -360,6 +421,10 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    n/N         下一个/上一个书签\n")
 	sb.WriteString("    y           复制当前行到剪贴板\n")
 	sb.WriteString("    B           切换日志缓冲区\n")
+	sb.WriteString("    z           折叠连续重复日志\n")
+	sb.WriteString("    v           切换详情面板\n")
+	sb.WriteString("    [ / ]       切换预设槽并加载\n")
+	sb.WriteString("    m / M       保存/清空当前预设槽\n")
 	sb.WriteString("    w           切换换行模式\n")
 	sb.WriteString("    s           切换自动滚动\n")
 	sb.WriteString("    ?           显示/隐藏帮助\n")
@@ -512,6 +577,58 @@ func skipToWidth(s string, w int) string {
 		return ""
 	}
 	return string(runes[w:])
+}
+
+func wrapText(s string, width, maxLines int) []string {
+	if maxLines <= 0 {
+		return nil
+	}
+	if width < 8 {
+		width = 8
+	}
+	runes := []rune(s)
+	chunk := width - 2
+	if chunk < 1 {
+		chunk = 1
+	}
+
+	lines := make([]string, 0, maxLines)
+	for len(runes) > 0 && len(lines) < maxLines {
+		take := chunk
+		if take > len(runes) {
+			take = len(runes)
+		}
+		lines = append(lines, string(runes[:take]))
+		runes = runes[take:]
+	}
+	if len(runes) > 0 && len(lines) > 0 {
+		last := []rune(lines[len(lines)-1])
+		if len(last) > chunk-1 {
+			last = last[:chunk-1]
+		}
+		lines[len(lines)-1] = string(last) + "…"
+	}
+	return lines
+}
+
+func rowPrefix(selected, bookmarked bool) string {
+	switch {
+	case selected && bookmarked:
+		return "❯🔖 "
+	case selected:
+		return "❯ "
+	case bookmarked:
+		return "🔖 "
+	default:
+		return "  "
+	}
+}
+
+func presetMark(used bool) string {
+	if used {
+		return "★"
+	}
+	return "·"
 }
 
 func filterModeLabel(mode InputMode) string {

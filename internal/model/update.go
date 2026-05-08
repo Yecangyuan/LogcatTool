@@ -47,9 +47,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.allEntries.Push(entry)
 				if m.filter.Match(entry) {
 					m.filtered = append(m.filtered, entry)
+					m.appendDisplayRow(entry)
 				}
 			}
 			m.filteredCount = len(m.filtered)
+			m.displayCount = len(m.displayRows)
 			// Prune filtered list if ring buffer overflowed
 			if m.totalCount > m.allEntries.Cap() && len(m.filtered) > m.allEntries.Cap()*2 {
 				m.refilter()
@@ -195,8 +197,10 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Clear):
 		m.allEntries.Clear()
 		m.filtered = nil
+		m.displayRows = nil
 		m.totalCount = 0
 		m.filteredCount = 0
+		m.displayCount = 0
 		m.scrollOffset = 0
 		m.bookmarks = make(map[int]bool)
 		m.statusMsg = "日志已清除"
@@ -276,6 +280,27 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Bookmark):
 		return m.toggleBookmark(), nil
 
+	case key.Matches(msg, m.keys.PresetPrev):
+		m.activePreset = (m.activePreset + len(m.presetSlots) - 1) % len(m.presetSlots)
+		return m, m.applyActivePreset()
+
+	case key.Matches(msg, m.keys.PresetNext):
+		m.activePreset = (m.activePreset + 1) % len(m.presetSlots)
+		return m, m.applyActivePreset()
+
+	case key.Matches(msg, m.keys.PresetSave):
+		m.presetSlots[m.activePreset] = filterPreset{
+			Used:     true,
+			Snapshot: m.filter.Snapshot(),
+		}
+		m.statusMsg = fmt.Sprintf("已保存到预设 %d: %s", m.activePreset+1, m.presetSummary(m.filter.Snapshot()))
+		return m, nil
+
+	case key.Matches(msg, m.keys.PresetClear):
+		m.presetSlots[m.activePreset] = filterPreset{}
+		m.statusMsg = fmt.Sprintf("已清空预设 %d", m.activePreset+1)
+		return m, nil
+
 	case key.Matches(msg, m.keys.NextBookmark):
 		m.gotoNextBookmark(true)
 		return m, nil
@@ -303,6 +328,36 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case key.Matches(msg, m.keys.Collapse):
+		m.collapseDupes = !m.collapseDupes
+		m.rebuildDisplayRows()
+		if m.autoScroll {
+			m.scrollToBottom()
+		} else {
+			m.clampScroll()
+		}
+		if m.collapseDupes {
+			m.statusMsg = "重复折叠: 开"
+		} else {
+			m.statusMsg = "重复折叠: 关"
+		}
+		return m, nil
+
+	case key.Matches(msg, m.keys.ToggleDetail):
+		m.showDetails = !m.showDetails
+		m.viewHeight = m.calcViewHeight()
+		if m.autoScroll {
+			m.scrollToBottom()
+		} else {
+			m.clampScroll()
+		}
+		if m.showDetails {
+			m.statusMsg = "详情面板: 开"
+		} else {
+			m.statusMsg = "详情面板: 关"
+		}
+		return m, nil
+
 	case key.Matches(msg, m.keys.BufferSelect):
 		if m.filePath != "" {
 			m.statusMsg = "文件模式不支持切换缓冲区"
@@ -318,6 +373,16 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.CopyLine):
 		return m, m.copyCurrentLine()
+
+	case key.Matches(msg, m.keys.CrashMode):
+		m.filter.CrashOnly = !m.filter.CrashOnly
+		m.refilter()
+		if m.filter.CrashOnly {
+			m.statusMsg = "崩溃模式: 开"
+		} else {
+			m.statusMsg = "崩溃模式: 关"
+		}
+		return m, nil
 
 	// Navigation
 	case key.Matches(msg, m.keys.Up):
@@ -574,10 +639,59 @@ func (m *AppModel) refilter() {
 	all := m.allEntries.All()
 	m.filtered = m.filter.ApplyAll(all)
 	m.filteredCount = len(m.filtered)
+	m.rebuildDisplayRows()
 	if m.autoScroll {
 		m.scrollToBottom()
 	}
 	m.clampScroll()
+}
+
+func (m *AppModel) rebuildDisplayRows() {
+	m.displayRows = nil
+	if !m.collapseDupes {
+		m.displayRows = make([]displayRow, 0, len(m.filtered))
+		for _, entry := range m.filtered {
+			m.displayRows = append(m.displayRows, displayRow{Entry: entry, Count: 1})
+		}
+		m.displayCount = len(m.displayRows)
+		return
+	}
+
+	for _, entry := range m.filtered {
+		m.appendDisplayRow(entry)
+	}
+	m.displayCount = len(m.displayRows)
+}
+
+func (m *AppModel) appendDisplayRow(entry *logentry.Entry) {
+	if entry == nil {
+		return
+	}
+	if !m.collapseDupes || len(m.displayRows) == 0 {
+		m.displayRows = append(m.displayRows, displayRow{Entry: entry, Count: 1})
+		m.displayCount = len(m.displayRows)
+		return
+	}
+
+	last := &m.displayRows[len(m.displayRows)-1]
+	if canFold(last.Entry, entry) {
+		last.Entry = entry
+		last.Count++
+	} else {
+		m.displayRows = append(m.displayRows, displayRow{Entry: entry, Count: 1})
+	}
+	m.displayCount = len(m.displayRows)
+}
+
+func canFold(a, b *logentry.Entry) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	return a.PID == b.PID &&
+		a.TID == b.TID &&
+		a.Level == b.Level &&
+		a.Tag == b.Tag &&
+		a.Message == b.Message
 }
 
 func (m AppModel) activeNameFilterStatus() string {
@@ -593,10 +707,77 @@ func (m AppModel) activeNameFilterStatus() string {
 	}
 }
 
+func (m AppModel) presetSummary(s logentry.Snapshot) string {
+	var parts []string
+	if s.CrashOnly {
+		parts = append(parts, "崩溃")
+	}
+	if s.MinLevel > logentry.LevelVerbose {
+		parts = append(parts, "≥"+s.MinLevel.String())
+	}
+	if s.Package != "" {
+		parts = append(parts, "包:"+s.Package)
+	}
+	if s.Process != "" {
+		parts = append(parts, "进程:"+s.Process)
+	}
+	if s.Tag != "" {
+		parts = append(parts, "Tag:"+s.Tag)
+	}
+	if s.PID > 0 {
+		parts = append(parts, fmt.Sprintf("PID:%d", s.PID))
+	}
+	if s.SearchText != "" {
+		parts = append(parts, "搜:"+s.SearchText)
+	}
+	if len(parts) == 0 {
+		return "全部日志"
+	}
+	return strings.Join(parts, " ")
+}
+
+func (m *AppModel) applyActivePreset() tea.Cmd {
+	slot := m.presetSlots[m.activePreset]
+	if !slot.Used {
+		m.statusMsg = fmt.Sprintf("预设 %d 为空", m.activePreset+1)
+		return nil
+	}
+
+	m.filter.ApplySnapshot(slot.Snapshot)
+	m.refilter()
+	m.statusMsg = fmt.Sprintf("已应用预设 %d: %s", m.activePreset+1, m.presetSummary(slot.Snapshot))
+
+	if m.filePath == "" && (m.filter.Package != "" || m.filter.Process != "") {
+		return loadPackagePIDs(m.adbPath, m.currentDeviceSerial())
+	}
+	return nil
+}
+
+func (m AppModel) currentDeviceSerial() string {
+	if m.deviceIdx < len(m.devices) {
+		return m.devices[m.deviceIdx].Serial
+	}
+	return ""
+}
+
+func (m AppModel) currentDisplayRow() *displayRow {
+	if len(m.displayRows) == 0 {
+		return nil
+	}
+	idx := m.scrollOffset
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(m.displayRows) {
+		idx = len(m.displayRows) - 1
+	}
+	return &m.displayRows[idx]
+}
+
 // --- Scroll helpers ---
 
 func (m *AppModel) scrollToBottom() {
-	maxOffset := len(m.filtered) - m.viewHeight
+	maxOffset := len(m.displayRows) - m.viewHeight
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -607,7 +788,7 @@ func (m *AppModel) clampScroll() {
 	if m.scrollOffset < 0 {
 		m.scrollOffset = 0
 	}
-	maxOffset := len(m.filtered) - m.viewHeight
+	maxOffset := len(m.displayRows) - m.viewHeight
 	if maxOffset < 0 {
 		maxOffset = 0
 	}
@@ -617,7 +798,7 @@ func (m *AppModel) clampScroll() {
 }
 
 func (m *AppModel) isAtBottom() bool {
-	maxOffset := len(m.filtered) - m.viewHeight
+	maxOffset := len(m.displayRows) - m.viewHeight
 	if maxOffset < 0 {
 		return true
 	}
@@ -626,6 +807,9 @@ func (m *AppModel) isAtBottom() bool {
 
 func (m AppModel) calcViewHeight() int {
 	h := m.height - 3 // title(1) + filter(1) + status(1)
+	if m.showDetails {
+		h -= detailPaneHeight
+	}
 	if h < 1 {
 		h = 1
 	}
@@ -672,37 +856,35 @@ func (m AppModel) connectDevice(dev adb.Device) tea.Cmd {
 }
 
 func (m AppModel) toggleBookmark() AppModel {
-	if len(m.filtered) == 0 {
+	row := m.currentDisplayRow()
+	if row == nil || row.Entry == nil {
 		return m
 	}
-	idx := m.scrollOffset
-	if idx < len(m.filtered) {
-		entryIdx := m.filtered[idx].Index
-		if m.bookmarks[entryIdx] {
-			delete(m.bookmarks, entryIdx)
-		} else {
-			m.bookmarks[entryIdx] = true
-		}
+	entryIdx := row.Entry.Index
+	if m.bookmarks[entryIdx] {
+		delete(m.bookmarks, entryIdx)
+	} else {
+		m.bookmarks[entryIdx] = true
 	}
 	return m
 }
 
 func (m *AppModel) gotoNextBookmark(forward bool) {
-	if len(m.bookmarks) == 0 || len(m.filtered) == 0 {
+	if len(m.bookmarks) == 0 || len(m.displayRows) == 0 {
 		return
 	}
 
 	current := m.scrollOffset
 	if forward {
-		for i := current + 1; i < len(m.filtered); i++ {
-			if m.bookmarks[m.filtered[i].Index] {
+		for i := current + 1; i < len(m.displayRows); i++ {
+			if m.bookmarks[m.displayRows[i].Entry.Index] {
 				m.scrollOffset = i
 				m.autoScroll = false
 				return
 			}
 		}
 		for i := 0; i <= current; i++ {
-			if m.bookmarks[m.filtered[i].Index] {
+			if m.bookmarks[m.displayRows[i].Entry.Index] {
 				m.scrollOffset = i
 				m.autoScroll = false
 				return
@@ -710,14 +892,14 @@ func (m *AppModel) gotoNextBookmark(forward bool) {
 		}
 	} else {
 		for i := current - 1; i >= 0; i-- {
-			if m.bookmarks[m.filtered[i].Index] {
+			if m.bookmarks[m.displayRows[i].Entry.Index] {
 				m.scrollOffset = i
 				m.autoScroll = false
 				return
 			}
 		}
-		for i := len(m.filtered) - 1; i >= current; i-- {
-			if m.bookmarks[m.filtered[i].Index] {
+		for i := len(m.displayRows) - 1; i >= current; i-- {
+			if m.bookmarks[m.displayRows[i].Entry.Index] {
 				m.scrollOffset = i
 				m.autoScroll = false
 				return
@@ -727,10 +909,11 @@ func (m *AppModel) gotoNextBookmark(forward bool) {
 }
 
 func (m AppModel) copyCurrentLine() tea.Cmd {
-	if len(m.filtered) == 0 || m.scrollOffset >= len(m.filtered) {
+	row := m.currentDisplayRow()
+	if row == nil || row.Entry == nil {
 		return nil
 	}
-	line := m.filtered[m.scrollOffset].Raw
+	line := row.Entry.Raw
 	return func() tea.Msg {
 		copyToClipboard(line)
 		return nil
