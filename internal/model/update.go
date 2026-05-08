@@ -2,8 +2,10 @@ package model
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Yecangyuan/LogcatTool/internal/adb"
 	"github.com/Yecangyuan/LogcatTool/internal/logentry"
@@ -103,6 +105,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PackagePIDMsg:
 		m.filter.PIDsByPkg = map[string][]int(msg)
+		m.rebuildPIDLookups()
 		if m.filter.Package != "" || m.filter.Process != "" {
 			m.refilter()
 			m.scrollToBottom()
@@ -153,8 +156,12 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleDevicePickerKey(msg)
 	case ModePkgPicker:
 		return m.handlePkgPickerKey(msg)
-	case ModeSearch, ModeTagFilter, ModePkgFilter, ModePidFilter, ModeProcessFilter:
-		return m.handleFilterInputKey(msg)
+	case ModeStatsPanel:
+		return m.handleStatsPanelKey(msg)
+	default:
+		if isFilterInputMode(m.inputMode) {
+			return m.handleFilterInputKey(msg)
+		}
 	}
 
 	// Normal mode
@@ -220,6 +227,13 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.filterInput.Focus()
 		return m, nil
 
+	case key.Matches(msg, m.keys.TagExclude):
+		m.inputMode = ModeTagExcludeFilter
+		m.filterInput.Placeholder = "输入要排除的 Tag..."
+		m.filterInput.SetValue(m.filter.TagExclude)
+		m.filterInput.Focus()
+		return m, nil
+
 	case key.Matches(msg, m.keys.PkgFilter):
 		if m.filePath != "" {
 			m.statusMsg = "文件模式不支持包名过滤"
@@ -241,6 +255,23 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.filterInput.Placeholder = "输入进程名..."
 		m.filterInput.SetValue(m.filter.Process)
 		m.filterInput.Focus()
+		return m, nil
+
+	case key.Matches(msg, m.keys.AlertKeyword):
+		m.inputMode = ModeAlertKeyword
+		m.filterInput.Placeholder = "输入告警关键词..."
+		m.filterInput.SetValue(m.alertKeyword)
+		m.filterInput.Focus()
+		return m, nil
+
+	case key.Matches(msg, m.keys.TimeRange):
+		m.cycleTimeRange()
+		m.refilter()
+		return m, nil
+
+	case key.Matches(msg, m.keys.StatsPanel):
+		m.inputMode = ModeStatsPanel
+		m.statsSelection = 0
 		return m, nil
 
 	case key.Matches(msg, m.keys.PidFilter):
@@ -271,6 +302,10 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Bookmark):
 		return m.toggleBookmark(), nil
+
+	case key.Matches(msg, m.keys.Favorite):
+		m.toggleCurrentFavorite()
+		return m, nil
 
 	case key.Matches(msg, m.keys.PresetPrev):
 		m.activePreset = (m.activePreset + len(m.presetSlots) - 1) % len(m.presetSlots)
@@ -518,6 +553,24 @@ func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case key.Matches(msg, m.keys.Favorite):
+		if len(m.filteredPackages) == 0 || m.pkgPickerIdx >= len(m.filteredPackages) {
+			return m, nil
+		}
+		selected := m.filteredPackages[m.pkgPickerIdx]
+		if selected == "(清除过滤)" {
+			return m, nil
+		}
+		if m.favoritePackages[selected] {
+			delete(m.favoritePackages, selected)
+			m.statusMsg = fmt.Sprintf("已取消收藏应用: %s", selected)
+		} else {
+			m.favoritePackages[selected] = true
+			m.statusMsg = fmt.Sprintf("已收藏应用: %s", selected)
+		}
+		m.filterPackageList()
+		return m, nil
+
 	case key.Matches(msg, m.keys.Confirm):
 		if len(m.filteredPackages) > 0 && m.pkgPickerIdx < len(m.filteredPackages) {
 			selected := m.filteredPackages[m.pkgPickerIdx]
@@ -558,9 +611,48 @@ func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
+func (m AppModel) handleStatsPanelKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	rows := m.buildStatsRows()
+	if m.statsSelection >= len(rows) && len(rows) > 0 {
+		m.statsSelection = len(rows) - 1
+	}
+	switch {
+	case key.Matches(msg, m.keys.Cancel, m.keys.StatsPanel):
+		m.inputMode = ModeNormal
+		return m, nil
+	case key.Matches(msg, m.keys.Up):
+		if m.statsSelection > 0 {
+			m.statsSelection--
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Down):
+		if m.statsSelection < len(rows)-1 {
+			m.statsSelection++
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Favorite):
+		if len(rows) == 0 {
+			return m, nil
+		}
+		m.toggleFavoriteForStatsRow(rows[m.statsSelection])
+		return m, nil
+	case key.Matches(msg, m.keys.Confirm):
+		if len(rows) == 0 {
+			m.inputMode = ModeNormal
+			return m, nil
+		}
+		cmd := m.applyStatsRow(rows[m.statsSelection])
+		m.inputMode = ModeNormal
+		return m, cmd
+	case key.Matches(msg, m.keys.Quit):
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
 func (m *AppModel) filterPackageList() {
 	if m.pkgPickerSearch == "" {
-		m.filteredPackages = m.allPackages
+		m.filteredPackages = append([]string(nil), m.allPackages...)
 	} else {
 		search := strings.ToLower(m.pkgPickerSearch)
 		m.filteredPackages = nil
@@ -570,6 +662,17 @@ func (m *AppModel) filterPackageList() {
 			}
 		}
 	}
+	sort.SliceStable(m.filteredPackages, func(i, j int) bool {
+		left, right := m.filteredPackages[i], m.filteredPackages[j]
+		if left == "(清除过滤)" || right == "(清除过滤)" {
+			return left == "(清除过滤)"
+		}
+		lf, rf := m.favoritePackages[left], m.favoritePackages[right]
+		if lf != rf {
+			return lf
+		}
+		return left < right
+	})
 	m.pkgPickerIdx = 0
 }
 
@@ -598,6 +701,14 @@ func (m AppModel) handleFilterInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 			m.statusMsg = fmt.Sprintf("进程过滤: %s (正在刷新PID...)", m.filter.Process)
 			return m, loadPackagePIDs(m.adbPath, serial)
 		}
+		if mode == ModeAlertKeyword {
+			if m.alertKeyword == "" {
+				m.statusMsg = "已清除告警关键词"
+			} else {
+				m.statusMsg = fmt.Sprintf("告警关键词: %s", m.alertKeyword)
+			}
+			return m, nil
+		}
 		m.refilter()
 		return m, nil
 	}
@@ -614,6 +725,8 @@ func (m *AppModel) applyFilterInput() {
 		m.filter.SetSearch(val, true)
 	case ModeTagFilter:
 		m.filter.Tag = val
+	case ModeTagExcludeFilter:
+		m.filter.TagExclude = val
 	case ModePkgFilter:
 		m.filter.Package = val
 	case ModePidFilter:
@@ -624,11 +737,16 @@ func (m *AppModel) applyFilterInput() {
 		}
 	case ModeProcessFilter:
 		m.filter.Process = val
+	case ModeAlertKeyword:
+		m.alertKeyword = val
 	}
 }
 
 func (m *AppModel) refilter() {
 	all := m.allEntries.All()
+	if len(all) > 0 {
+		m.filter.ReferenceTime = all[len(all)-1].Timestamp
+	}
 	m.filtered = m.filter.ApplyAll(all)
 	m.filteredCount = len(m.filtered)
 	m.rebuildDisplayRows()
@@ -639,11 +757,23 @@ func (m *AppModel) refilter() {
 }
 
 func (m *AppModel) ingestEntries(entries []*logentry.Entry) {
+	if len(entries) == 0 {
+		return
+	}
+	latest := entries[len(entries)-1].Timestamp
 	for _, entry := range entries {
 		entry.Index = m.totalCount
 		m.totalCount++
 		m.preRenderEntry(entry)
 		m.allEntries.Push(entry)
+		m.maybeTriggerAlert(entry)
+	}
+	m.filter.ReferenceTime = latest
+	if m.filter.TimeWindow > 0 {
+		m.refilter()
+		return
+	}
+	for _, entry := range entries {
 		if m.filter.Match(entry) {
 			m.filtered = append(m.filtered, entry)
 			m.appendDisplayRow(entry)
@@ -707,6 +837,225 @@ func canFold(a, b *logentry.Entry) bool {
 		a.Message == b.Message
 }
 
+func (m *AppModel) rebuildPIDLookups() {
+	m.processByPID = make(map[int]string, len(m.filter.PIDsByPkg))
+	m.packageByPID = make(map[int]string, len(m.filter.PIDsByPkg))
+	for name, pids := range m.filter.PIDsByPkg {
+		pkg := packageNameFromProcess(name)
+		for _, pid := range pids {
+			m.processByPID[pid] = name
+			m.packageByPID[pid] = pkg
+		}
+	}
+}
+
+func packageNameFromProcess(name string) string {
+	if idx := strings.IndexByte(name, ':'); idx >= 0 {
+		return name[:idx]
+	}
+	return name
+}
+
+func (m *AppModel) cycleTimeRange() {
+	ranges := []time.Duration{0, 10 * time.Second, time.Minute, 5 * time.Minute}
+	next := 0
+	for i, d := range ranges {
+		if m.filter.TimeWindow == d {
+			next = (i + 1) % len(ranges)
+			break
+		}
+	}
+	m.filter.TimeWindow = ranges[next]
+	if m.filter.TimeWindow == 0 {
+		m.statusMsg = "时间范围: 全部"
+		return
+	}
+	m.statusMsg = fmt.Sprintf("时间范围: 最近 %s", formatDurationLabel(m.filter.TimeWindow))
+}
+
+func formatDurationLabel(d time.Duration) string {
+	switch d {
+	case 10 * time.Second:
+		return "10秒"
+	case time.Minute:
+		return "1分钟"
+	case 5 * time.Minute:
+		return "5分钟"
+	default:
+		return d.String()
+	}
+}
+
+func (m *AppModel) maybeTriggerAlert(entry *logentry.Entry) {
+	if entry == nil {
+		return
+	}
+	if entry.IsCrash {
+		m.lastAlert = fmt.Sprintf("Crash %s", truncTag(entry.Tag, 18))
+		return
+	}
+	if m.alertKeyword == "" {
+		return
+	}
+	if containsFoldLocal(entry.Tag, m.alertKeyword) || containsFoldLocal(entry.Message, m.alertKeyword) {
+		m.lastAlert = fmt.Sprintf("%s 命中 %s", truncTag(entry.Tag, 14), m.alertKeyword)
+	}
+}
+
+func (m *AppModel) toggleCurrentFavorite() {
+	row := m.currentDisplayRow()
+	if row == nil || row.Entry == nil {
+		m.statusMsg = "没有可收藏的当前日志"
+		return
+	}
+	process := m.processByPID[row.Entry.PID]
+	if process != "" {
+		if m.favoriteProcesses[process] {
+			delete(m.favoriteProcesses, process)
+			m.statusMsg = fmt.Sprintf("已取消收藏进程: %s", process)
+		} else {
+			m.favoriteProcesses[process] = true
+			m.statusMsg = fmt.Sprintf("已收藏进程: %s", process)
+		}
+		return
+	}
+	pkg := m.packageByPID[row.Entry.PID]
+	if pkg != "" {
+		if m.favoritePackages[pkg] {
+			delete(m.favoritePackages, pkg)
+			m.statusMsg = fmt.Sprintf("已取消收藏应用: %s", pkg)
+		} else {
+			m.favoritePackages[pkg] = true
+			m.statusMsg = fmt.Sprintf("已收藏应用: %s", pkg)
+		}
+		return
+	}
+	m.statusMsg = "当前日志没有可识别的应用/进程"
+}
+
+func (m *AppModel) toggleFavoriteForStatsRow(row statsRow) {
+	switch row.Kind {
+	case statsPackage:
+		if m.favoritePackages[row.Value] {
+			delete(m.favoritePackages, row.Value)
+			m.statusMsg = fmt.Sprintf("已取消收藏应用: %s", row.Value)
+		} else {
+			m.favoritePackages[row.Value] = true
+			m.statusMsg = fmt.Sprintf("已收藏应用: %s", row.Value)
+		}
+	case statsProcess:
+		if m.favoriteProcesses[row.Value] {
+			delete(m.favoriteProcesses, row.Value)
+			m.statusMsg = fmt.Sprintf("已取消收藏进程: %s", row.Value)
+		} else {
+			m.favoriteProcesses[row.Value] = true
+			m.statusMsg = fmt.Sprintf("已收藏进程: %s", row.Value)
+		}
+	default:
+		m.statusMsg = "该统计项不支持收藏"
+	}
+}
+
+func (m *AppModel) applyStatsRow(row statsRow) tea.Cmd {
+	switch row.Kind {
+	case statsLevel:
+		m.filter.SetMinLevel(row.Level)
+		m.statusMsg = fmt.Sprintf("统计筛选: ≥%s", row.Level.Label())
+	case statsTag:
+		m.filter.Tag = row.Value
+		m.statusMsg = fmt.Sprintf("统计筛选 Tag: %s", row.Value)
+	case statsPackage:
+		m.filter.Package = row.Value
+		m.statusMsg = fmt.Sprintf("统计筛选包名: %s", row.Value)
+	case statsProcess:
+		m.filter.Process = row.Value
+		m.statusMsg = fmt.Sprintf("统计筛选进程: %s", row.Value)
+	}
+	m.refilter()
+	if m.filePath == "" && (row.Kind == statsPackage || row.Kind == statsProcess) {
+		return loadPackagePIDs(m.adbPath, m.currentDeviceSerial())
+	}
+	return nil
+}
+
+func (m AppModel) buildStatsRows() []statsRow {
+	levelCounts := make(map[logentry.Level]int)
+	tagCounts := make(map[string]int)
+	processCounts := make(map[string]int)
+	packageCounts := make(map[string]int)
+
+	for _, entry := range m.filtered {
+		levelCounts[entry.Level]++
+		if entry.Tag != "" {
+			tagCounts[entry.Tag]++
+		}
+		if process := m.processByPID[entry.PID]; process != "" {
+			processCounts[process]++
+			packageCounts[packageNameFromProcess(process)]++
+		} else if pkg := m.packageByPID[entry.PID]; pkg != "" {
+			packageCounts[pkg]++
+		}
+	}
+
+	rows := make([]statsRow, 0, 24)
+	for _, level := range logentry.FilterableLevels {
+		if count := levelCounts[level]; count > 0 {
+			rows = append(rows, statsRow{
+				Kind:    statsLevel,
+				Section: "级别",
+				Label:   level.Label(),
+				Value:   level.Label(),
+				Count:   count,
+				Level:   level,
+			})
+		}
+	}
+	rows = append(rows, topCountRows("Tag", statsTag, tagCounts, nil)...)
+	rows = append(rows, topCountRows("进程", statsProcess, processCounts, m.favoriteProcesses)...)
+	rows = append(rows, topCountRows("应用", statsPackage, packageCounts, m.favoritePackages)...)
+	return rows
+}
+
+func topCountRows(section string, kind statsKind, counts map[string]int, favorites map[string]bool) []statsRow {
+	type item struct {
+		Name     string
+		Count    int
+		Favorite bool
+	}
+	items := make([]item, 0, len(counts))
+	for name, count := range counts {
+		items = append(items, item{Name: name, Count: count, Favorite: favorites != nil && favorites[name]})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Favorite != items[j].Favorite {
+			return items[i].Favorite
+		}
+		if items[i].Count != items[j].Count {
+			return items[i].Count > items[j].Count
+		}
+		return items[i].Name < items[j].Name
+	})
+	if len(items) > 5 {
+		items = items[:5]
+	}
+	rows := make([]statsRow, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, statsRow{
+			Kind:     kind,
+			Section:  section,
+			Label:    item.Name,
+			Value:    item.Name,
+			Count:    item.Count,
+			Favorite: item.Favorite,
+		})
+	}
+	return rows
+}
+
+func containsFoldLocal(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
+
 func (m AppModel) activeNameFilterStatus() string {
 	switch {
 	case m.filter.Package != "" && m.filter.Process != "":
@@ -725,6 +1074,9 @@ func (m AppModel) presetSummary(s logentry.Snapshot) string {
 	if s.CrashOnly {
 		parts = append(parts, "崩溃")
 	}
+	if s.TimeWindow > 0 {
+		parts = append(parts, "时段:"+formatDurationLabel(s.TimeWindow))
+	}
 	if s.MinLevel > logentry.LevelVerbose {
 		parts = append(parts, "≥"+s.MinLevel.String())
 	}
@@ -736,6 +1088,9 @@ func (m AppModel) presetSummary(s logentry.Snapshot) string {
 	}
 	if s.Tag != "" {
 		parts = append(parts, "Tag:"+s.Tag)
+	}
+	if s.TagExclude != "" {
+		parts = append(parts, "排除:"+s.TagExclude)
 	}
 	if s.PID > 0 {
 		parts = append(parts, fmt.Sprintf("PID:%d", s.PID))

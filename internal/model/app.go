@@ -24,12 +24,24 @@ const (
 	ModeNormal InputMode = iota
 	ModeSearch
 	ModeTagFilter
+	ModeTagExcludeFilter
 	ModePkgFilter
 	ModePidFilter
 	ModeProcessFilter
+	ModeAlertKeyword
+	ModeStatsPanel
 	ModeDevicePicker
 	ModePkgPicker
 )
+
+func isFilterInputMode(mode InputMode) bool {
+	switch mode {
+	case ModeSearch, ModeTagFilter, ModeTagExcludeFilter, ModePkgFilter, ModePidFilter, ModeProcessFilter, ModeAlertKeyword:
+		return true
+	default:
+		return false
+	}
+}
 
 // Logcat buffer types
 type LogcatBuffer int
@@ -82,6 +94,25 @@ type filterPreset struct {
 	Snapshot logentry.Snapshot
 }
 
+type statsKind string
+
+const (
+	statsLevel   statsKind = "level"
+	statsTag     statsKind = "tag"
+	statsPackage statsKind = "package"
+	statsProcess statsKind = "process"
+)
+
+type statsRow struct {
+	Kind     statsKind
+	Section  string
+	Label    string
+	Value    string
+	Count    int
+	Level    logentry.Level
+	Favorite bool
+}
+
 type AppModel struct {
 	allEntries  *ringbuf.RingBuffer[*logentry.Entry]
 	filtered    []*logentry.Entry
@@ -128,6 +159,7 @@ type AppModel struct {
 	filteredPackages []string
 	pkgPickerIdx     int
 	pkgPickerSearch  string
+	statsSelection   int
 
 	// Logcat buffer selection
 	logBuffer LogcatBuffer
@@ -139,6 +171,16 @@ type AppModel struct {
 	// Filter presets
 	activePreset int
 	presetSlots  [3]filterPreset
+
+	// Favorites
+	favoritePackages  map[string]bool
+	favoriteProcesses map[string]bool
+	processByPID      map[int]string
+	packageByPID      map[int]string
+
+	// Alerts
+	alertKeyword string
+	lastAlert    string
 }
 
 // --- Messages ---
@@ -278,17 +320,21 @@ func New(opts Options) AppModel {
 	ti.SetWidth(40)
 
 	return AppModel{
-		allEntries:   ringbuf.New[*logentry.Entry](opts.BufferSize),
-		filter:       logentry.NewFilter(),
-		adbPath:      opts.ADBPath,
-		autoScroll:   true,
-		keys:         DefaultKeyMap(),
-		helpModel:    help.New(),
-		filterInput:  ti,
-		bookmarks:    make(map[int]bool),
-		filePath:     opts.FilePath,
-		presetSerial: opts.Serial,
-		logBuffer:    BufferAll,
+		allEntries:        ringbuf.New[*logentry.Entry](opts.BufferSize),
+		filter:            logentry.NewFilter(),
+		adbPath:           opts.ADBPath,
+		autoScroll:        true,
+		keys:              DefaultKeyMap(),
+		helpModel:         help.New(),
+		filterInput:       ti,
+		bookmarks:         make(map[int]bool),
+		filePath:          opts.FilePath,
+		presetSerial:      opts.Serial,
+		logBuffer:         BufferAll,
+		favoritePackages:  make(map[string]bool),
+		favoriteProcesses: make(map[string]bool),
+		processByPID:      make(map[int]string),
+		packageByPID:      make(map[int]string),
 	}
 }
 

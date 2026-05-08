@@ -166,6 +166,18 @@ func TestFilterMatch(t *testing.T) {
 		}
 	})
 
+	t.Run("tag exclude filter", func(t *testing.T) {
+		f := NewFilter()
+		f.TagExclude = "My"
+		if f.Match(entry) {
+			t.Error("should exclude matching tag")
+		}
+		f.TagExclude = "Other"
+		if !f.Match(entry) {
+			t.Error("should not exclude unmatched tag")
+		}
+	})
+
 	t.Run("search text", func(t *testing.T) {
 		f := NewFilter()
 		f.SetSearch("hello", false)
@@ -249,22 +261,38 @@ func TestFilterMatch(t *testing.T) {
 		f := NewFilter()
 		f.SetMinLevel(LevelWarn)
 		f.Tag = "Audio"
+		f.TagExclude = "Noise"
 		f.PID = 321
 		f.Package = "com.test.app"
 		f.Process = "remote"
 		f.CrashOnly = true
+		f.TimeWindow = time.Minute
 		f.SetSearch("fatal", true)
 
 		snap := f.Snapshot()
 		other := NewFilter()
 		other.ApplySnapshot(snap)
 
-		if other.MinLevel != LevelWarn || other.Tag != "Audio" || other.PID != 321 ||
-			other.Package != "com.test.app" || other.Process != "remote" || !other.CrashOnly {
+		if other.MinLevel != LevelWarn || other.Tag != "Audio" || other.TagExclude != "Noise" || other.PID != 321 ||
+			other.Package != "com.test.app" || other.Process != "remote" || !other.CrashOnly || other.TimeWindow != time.Minute {
 			t.Error("snapshot should restore scalar filter fields")
 		}
 		if other.SearchText != "fatal" || !other.IsRegex || other.SearchRe == nil {
 			t.Error("snapshot should restore search settings")
+		}
+	})
+
+	t.Run("time window filter", func(t *testing.T) {
+		f := NewFilter()
+		f.TimeWindow = time.Minute
+		f.ReferenceTime = time.Now()
+		recent := &Entry{Timestamp: f.ReferenceTime.Add(-30 * time.Second), PID: 1, TID: 1, Level: LevelInfo}
+		old := &Entry{Timestamp: f.ReferenceTime.Add(-2 * time.Minute), PID: 1, TID: 1, Level: LevelInfo}
+		if !f.Match(recent) {
+			t.Error("recent entry should match time window")
+		}
+		if f.Match(old) {
+			t.Error("old entry should not match time window")
 		}
 	})
 

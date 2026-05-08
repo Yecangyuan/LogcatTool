@@ -3,29 +3,35 @@ package logentry
 import (
 	"regexp"
 	"strings"
+	"time"
 )
 
 type Filter struct {
-	MinLevel   Level
-	Tag        string
-	PID        int
-	Package    string
-	Process    string
-	CrashOnly  bool
-	SearchText string
-	SearchRe   *regexp.Regexp
-	IsRegex    bool
-	PIDsByPkg  map[string][]int // package/process name -> PIDs mapping
-	Levels     map[Level]bool   // deprecated: kept for compatibility, unused
+	MinLevel      Level
+	Tag           string
+	TagExclude    string
+	PID           int
+	Package       string
+	Process       string
+	CrashOnly     bool
+	TimeWindow    time.Duration
+	ReferenceTime time.Time
+	SearchText    string
+	SearchRe      *regexp.Regexp
+	IsRegex       bool
+	PIDsByPkg     map[string][]int // package/process name -> PIDs mapping
+	Levels        map[Level]bool   // deprecated: kept for compatibility, unused
 }
 
 type Snapshot struct {
 	MinLevel   Level
 	Tag        string
+	TagExclude string
 	PID        int
 	Package    string
 	Process    string
 	CrashOnly  bool
+	TimeWindow time.Duration
 	SearchText string
 	IsRegex    bool
 }
@@ -49,6 +55,10 @@ func (f *Filter) Match(e *Entry) bool {
 		return false
 	}
 
+	if f.TagExclude != "" && containsFold(e.Tag, f.TagExclude) {
+		return false
+	}
+
 	if f.PID > 0 && e.PID != f.PID {
 		return false
 	}
@@ -62,6 +72,10 @@ func (f *Filter) Match(e *Entry) bool {
 	}
 
 	if f.CrashOnly && !e.IsCrash {
+		return false
+	}
+
+	if !f.matchTime(e.Timestamp) {
 		return false
 	}
 
@@ -128,6 +142,17 @@ func (f *Filter) matchSearch(e *Entry) bool {
 	return true
 }
 
+func (f *Filter) matchTime(ts time.Time) bool {
+	if f.TimeWindow <= 0 {
+		return true
+	}
+	ref := f.ReferenceTime
+	if ref.IsZero() {
+		ref = time.Now()
+	}
+	return !ts.Before(ref.Add(-f.TimeWindow))
+}
+
 func (f *Filter) SetSearch(text string, isRegex bool) {
 	f.IsRegex = isRegex
 	f.SearchText = text
@@ -150,7 +175,7 @@ func (f *Filter) IsLevelEnabled(level Level) bool {
 }
 
 func (f *Filter) IsActive() bool {
-	if f.Tag != "" || f.PID > 0 || f.Package != "" || f.Process != "" || f.CrashOnly {
+	if f.Tag != "" || f.TagExclude != "" || f.PID > 0 || f.Package != "" || f.Process != "" || f.CrashOnly || f.TimeWindow > 0 {
 		return true
 	}
 	if f.SearchText != "" || f.SearchRe != nil {
@@ -184,10 +209,12 @@ func (f *Filter) Snapshot() Snapshot {
 	return Snapshot{
 		MinLevel:   f.MinLevel,
 		Tag:        f.Tag,
+		TagExclude: f.TagExclude,
 		PID:        f.PID,
 		Package:    f.Package,
 		Process:    f.Process,
 		CrashOnly:  f.CrashOnly,
+		TimeWindow: f.TimeWindow,
 		SearchText: f.SearchText,
 		IsRegex:    f.IsRegex,
 	}
@@ -196,9 +223,11 @@ func (f *Filter) Snapshot() Snapshot {
 func (f *Filter) ApplySnapshot(s Snapshot) {
 	f.MinLevel = s.MinLevel
 	f.Tag = s.Tag
+	f.TagExclude = s.TagExclude
 	f.PID = s.PID
 	f.Package = s.Package
 	f.Process = s.Process
 	f.CrashOnly = s.CrashOnly
+	f.TimeWindow = s.TimeWindow
 	f.SetSearch(s.SearchText, s.IsRegex)
 }

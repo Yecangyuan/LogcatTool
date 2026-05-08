@@ -56,9 +56,12 @@ func (m AppModel) View() tea.View {
 	if m.inputMode == ModePkgPicker {
 		content = m.overlayPkgPicker(content)
 	}
+	if m.inputMode == ModeStatsPanel {
+		content = m.overlayStatsPanel(content)
+	}
 
 	v.SetContent(content)
-	if m.inputMode >= ModeSearch && m.inputMode <= ModeProcessFilter {
+	if isFilterInputMode(m.inputMode) {
 		c := m.filterInput.Cursor()
 		if c != nil {
 			c.Y += 1 // offset for title bar
@@ -168,6 +171,7 @@ func (m AppModel) renderDetailPane() string {
 		header,
 		fmt.Sprintf("  时间: %s", entry.Timestamp.Format("2006-01-02 15:04:05.000")),
 		fmt.Sprintf("  Tag : %s", entry.Tag),
+		fmt.Sprintf("  进程: %s", m.processDisplay(entry.PID)),
 	}
 	lines = append(lines, wrapText("  原始: "+entry.Raw, width, detailPaneHeight-len(lines))...)
 	for len(lines) < detailPaneHeight {
@@ -307,7 +311,7 @@ func (m AppModel) renderFilterBar() string {
 	}
 
 	// Active filter input or display
-	if m.inputMode >= ModeSearch && m.inputMode <= ModeProcessFilter {
+	if isFilterInputMode(m.inputMode) {
 		label := filterModeLabel(m.inputMode)
 		parts = append(parts, ui.FilterLabelStyle.Render(" "+label+": "))
 		parts = append(parts, m.filterInput.View())
@@ -319,6 +323,10 @@ func (m AppModel) renderFilterBar() string {
 		if m.filter.Tag != "" {
 			parts = append(parts, ui.FilterActiveStyle.Render(
 				fmt.Sprintf(" Tag:%s", m.filter.Tag)))
+		}
+		if m.filter.TagExclude != "" {
+			parts = append(parts, ui.FilterActiveStyle.Render(
+				fmt.Sprintf(" 排除Tag:%s", m.filter.TagExclude)))
 		}
 		if m.filter.Package != "" {
 			parts = append(parts, ui.FilterActiveStyle.Render(
@@ -334,6 +342,14 @@ func (m AppModel) renderFilterBar() string {
 		if m.filter.PID > 0 {
 			parts = append(parts, ui.FilterActiveStyle.Render(
 				fmt.Sprintf(" PID:%d", m.filter.PID)))
+		}
+		if m.filter.TimeWindow > 0 {
+			parts = append(parts, ui.FilterActiveStyle.Render(
+				fmt.Sprintf(" 时间:%s", formatDurationLabel(m.filter.TimeWindow))))
+		}
+		if m.alertKeyword != "" {
+			parts = append(parts, ui.FilterActiveStyle.Render(
+				fmt.Sprintf(" 告警:%s", m.alertKeyword)))
 		}
 	}
 	parts = append(parts, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(
@@ -382,6 +398,9 @@ func (m AppModel) renderStatusBar() string {
 	if m.showDetails {
 		left += "  ◫详情"
 	}
+	if m.lastAlert != "" {
+		left += "  🚨" + truncateLabel(m.lastAlert, 20)
+	}
 
 	right := " /:搜索 Space:暂停 ?:帮助 q:退出 "
 	if m.statusMsg != "" {
@@ -410,10 +429,13 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("\n  过滤:\n")
 	sb.WriteString("    /           搜索 (支持正则)\n")
 	sb.WriteString("    t           Tag 过滤\n")
+	sb.WriteString("    E           Tag 黑名单\n")
 	sb.WriteString("    p           包名过滤 (下拉选择)\n")
 	sb.WriteString("    P           进程名过滤\n")
 	sb.WriteString("    i           PID 过滤\n")
 	sb.WriteString("    x           崩溃模式\n")
+	sb.WriteString("    r           切换时间范围 (全部/10秒/1分/5分)\n")
+	sb.WriteString("    A           设置告警关键词\n")
 	sb.WriteString("    1-6         选择最低日志级别 V/D/I/W/E/F\n")
 	sb.WriteString("\n  操作:\n")
 	sb.WriteString("    Space       暂停/恢复日志流\n")
@@ -424,6 +446,8 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    n/N         下一个/上一个书签\n")
 	sb.WriteString("    y           复制当前行到剪贴板\n")
 	sb.WriteString("    B           切换日志缓冲区\n")
+	sb.WriteString("    a           打开统计面板\n")
+	sb.WriteString("    F           收藏当前应用/进程\n")
 	sb.WriteString("    z           折叠连续重复日志\n")
 	sb.WriteString("    v           切换详情面板\n")
 	sb.WriteString("    [ / ]       切换预设槽并加载\n")
@@ -504,11 +528,15 @@ func (m AppModel) overlayPkgPicker(bg string) string {
 		for i := startIdx; i < endIdx; i++ {
 			pkg := m.filteredPackages[i]
 			cursor := "  "
+			prefix := ""
+			if m.favoritePackages[pkg] {
+				prefix = "★ "
+			}
 			if i == m.pkgPickerIdx {
 				cursor = "▸ "
-				sb.WriteString(ui.DeviceSelectedStyle.Render(cursor + pkg))
+				sb.WriteString(ui.DeviceSelectedStyle.Render(cursor + prefix + pkg))
 			} else {
-				sb.WriteString(ui.DeviceNormalStyle.Render(cursor + pkg))
+				sb.WriteString(ui.DeviceNormalStyle.Render(cursor + prefix + pkg))
 			}
 			sb.WriteString("\n")
 		}
@@ -520,7 +548,7 @@ func (m AppModel) overlayPkgPicker(bg string) string {
 		sb.WriteString(fmt.Sprintf("\n  %d/%d", m.pkgPickerIdx+1, len(m.filteredPackages)))
 	}
 
-	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter确认 Esc取消 输入搜索"))
+	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter确认 F收藏 Esc取消 输入搜索"))
 
 	picker := ui.DevicePickerStyle.Render(sb.String())
 
@@ -536,6 +564,49 @@ func (m AppModel) overlayPkgPicker(bg string) string {
 	}
 
 	return placeOverlay(x, y, picker, bg)
+}
+
+func (m AppModel) overlayStatsPanel(bg string) string {
+	rows := m.buildStatsRows()
+	var sb strings.Builder
+	sb.WriteString(ui.HelpTitleStyle.Render("统计面板") + "\n\n")
+
+	if len(rows) == 0 {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  当前没有可统计的日志"))
+	} else {
+		lastSection := ""
+		for i, row := range rows {
+			if row.Section != lastSection {
+				if lastSection != "" {
+					sb.WriteString("\n")
+				}
+				sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("  " + row.Section))
+				sb.WriteString("\n")
+				lastSection = row.Section
+			}
+			cursor := "  "
+			if i == m.statsSelection {
+				cursor = "▸ "
+			}
+			fav := ""
+			if row.Favorite {
+				fav = "★ "
+			}
+			sb.WriteString(fmt.Sprintf("%s%-20s %5d\n", cursor, fav+truncateLabel(row.Label, 18), row.Count))
+		}
+	}
+
+	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter过滤 F收藏 a/Esc关闭"))
+	panel := ui.DevicePickerStyle.Render(sb.String())
+	x := (m.width - lipgloss.Width(panel)) / 2
+	y := (m.height - lipgloss.Height(panel)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	return placeOverlay(x, y, panel, bg)
 }
 
 func placeOverlay(x, y int, overlay, bg string) string {
@@ -634,16 +705,46 @@ func presetMark(used bool) string {
 	return "·"
 }
 
+func truncateLabel(s string, max int) string {
+	runes := []rune(s)
+	if len(runes) <= max {
+		return s
+	}
+	if max < 2 {
+		return string(runes[:max])
+	}
+	return string(runes[:max-1]) + "…"
+}
+
+func (m AppModel) processDisplay(pid int) string {
+	process := m.processByPID[pid]
+	pkg := m.packageByPID[pid]
+	switch {
+	case process != "" && pkg != "" && process != pkg:
+		return fmt.Sprintf("%s (%s)", process, pkg)
+	case process != "":
+		return process
+	case pkg != "":
+		return pkg
+	default:
+		return "未知"
+	}
+}
+
 func filterModeLabel(mode InputMode) string {
 	switch mode {
 	case ModeSearch:
 		return "搜索"
 	case ModeTagFilter:
 		return "Tag"
+	case ModeTagExcludeFilter:
+		return "排除Tag"
 	case ModePkgFilter:
 		return "包名"
 	case ModeProcessFilter:
 		return "进程"
+	case ModeAlertKeyword:
+		return "告警"
 	case ModePidFilter:
 		return "PID"
 	default:

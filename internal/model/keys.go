@@ -14,10 +14,15 @@ type KeyMap struct {
 	Bottom       key.Binding
 	Search       key.Binding
 	TagFilter    key.Binding
+	TagExclude   key.Binding
 	PkgFilter    key.Binding
 	ProcFilter   key.Binding
 	PidFilter    key.Binding
 	CrashMode    key.Binding
+	TimeRange    key.Binding
+	StatsPanel   key.Binding
+	Favorite     key.Binding
+	AlertKeyword key.Binding
 	Pause        key.Binding
 	Clear        key.Binding
 	DevicePicker key.Binding
@@ -92,6 +97,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("t"),
 			key.WithHelp("t", "Tag过滤"),
 		),
+		TagExclude: key.NewBinding(
+			key.WithKeys("E"),
+			key.WithHelp("E", "Tag黑名单"),
+		),
 		PkgFilter: key.NewBinding(
 			key.WithKeys("p"),
 			key.WithHelp("p", "包名过滤"),
@@ -107,6 +116,22 @@ func DefaultKeyMap() KeyMap {
 		CrashMode: key.NewBinding(
 			key.WithKeys("x"),
 			key.WithHelp("x", "崩溃模式"),
+		),
+		TimeRange: key.NewBinding(
+			key.WithKeys("r"),
+			key.WithHelp("r", "时间范围"),
+		),
+		StatsPanel: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "统计面板"),
+		),
+		Favorite: key.NewBinding(
+			key.WithKeys("F"),
+			key.WithHelp("F", "收藏"),
+		),
+		AlertKeyword: key.NewBinding(
+			key.WithKeys("A"),
+			key.WithHelp("A", "告警关键词"),
 		),
 		Pause: key.NewBinding(
 			key.WithKeys("space"),
@@ -222,7 +247,8 @@ func (k KeyMap) ShortHelp() []key.Binding {
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Search, k.TagFilter, k.PkgFilter, k.ProcFilter, k.PidFilter, k.CrashMode},
+		{k.Search, k.TagFilter, k.TagExclude, k.PkgFilter, k.ProcFilter, k.PidFilter},
+		{k.CrashMode, k.TimeRange, k.StatsPanel, k.Favorite, k.AlertKeyword},
 		{k.LevelV, k.LevelD, k.LevelI, k.LevelW, k.LevelE, k.LevelF},
 		{k.Pause, k.Clear, k.DevicePicker, k.Export, k.BufferSelect},
 		{k.Bookmark, k.NextBookmark, k.PrevBookmark, k.CopyLine, k.ToggleDetail},
