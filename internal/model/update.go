@@ -117,11 +117,11 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case PackagePIDMsg:
 		m.filter.PIDsByPkg = map[string][]int(msg)
-		if m.filter.Package != "" {
+		if m.filter.Package != "" || m.filter.Process != "" {
 			m.refilter()
 			m.scrollToBottom()
 			m.autoScroll = false
-			m.statusMsg = fmt.Sprintf("包名过滤: %s", m.filter.Package)
+			m.statusMsg = m.activeNameFilterStatus()
 		}
 
 	case PackageListMsg:
@@ -167,7 +167,7 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleDevicePickerKey(msg)
 	case ModePkgPicker:
 		return m.handlePkgPickerKey(msg)
-	case ModeSearch, ModeTagFilter, ModePkgFilter, ModePidFilter:
+	case ModeSearch, ModeTagFilter, ModePkgFilter, ModePidFilter, ModeProcessFilter:
 		return m.handleFilterInputKey(msg)
 	}
 
@@ -235,6 +235,17 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		m.statusMsg = "正在获取应用列表..."
 		return m, listPackagesCmd(m.adbPath, serial)
+
+	case key.Matches(msg, m.keys.ProcFilter):
+		if m.filePath != "" {
+			m.statusMsg = "文件模式不支持进程名过滤"
+			return m, nil
+		}
+		m.inputMode = ModeProcessFilter
+		m.filterInput.Placeholder = "输入进程名..."
+		m.filterInput.SetValue(m.filter.Process)
+		m.filterInput.Focus()
+		return m, nil
 
 	case key.Matches(msg, m.keys.PidFilter):
 		m.inputMode = ModePidFilter
@@ -513,9 +524,23 @@ func (m AppModel) handleFilterInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		return m, nil
 
 	case key.Matches(msg, m.keys.Confirm):
+		mode := m.inputMode
 		m.applyFilterInput()
 		m.inputMode = ModeNormal
 		m.filterInput.Blur()
+		if mode == ModeProcessFilter {
+			if m.filter.Process == "" {
+				m.refilter()
+				m.statusMsg = "已清除进程过滤"
+				return m, nil
+			}
+			serial := ""
+			if m.deviceIdx < len(m.devices) {
+				serial = m.devices[m.deviceIdx].Serial
+			}
+			m.statusMsg = fmt.Sprintf("进程过滤: %s (正在刷新PID...)", m.filter.Process)
+			return m, loadPackagePIDs(m.adbPath, serial)
+		}
 		m.refilter()
 		return m, nil
 	}
@@ -540,6 +565,8 @@ func (m *AppModel) applyFilterInput() {
 		} else {
 			m.filter.PID = 0
 		}
+	case ModeProcessFilter:
+		m.filter.Process = val
 	}
 }
 
@@ -551,6 +578,19 @@ func (m *AppModel) refilter() {
 		m.scrollToBottom()
 	}
 	m.clampScroll()
+}
+
+func (m AppModel) activeNameFilterStatus() string {
+	switch {
+	case m.filter.Package != "" && m.filter.Process != "":
+		return fmt.Sprintf("包名:%s  进程:%s", m.filter.Package, m.filter.Process)
+	case m.filter.Package != "":
+		return fmt.Sprintf("包名过滤: %s", m.filter.Package)
+	case m.filter.Process != "":
+		return fmt.Sprintf("进程过滤: %s", m.filter.Process)
+	default:
+		return "进程列表已刷新"
+	}
 }
 
 // --- Scroll helpers ---

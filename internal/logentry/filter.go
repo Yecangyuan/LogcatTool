@@ -10,10 +10,11 @@ type Filter struct {
 	Tag        string
 	PID        int
 	Package    string
+	Process    string
 	SearchText string
 	SearchRe   *regexp.Regexp
 	IsRegex    bool
-	PIDsByPkg  map[string][]int // package name -> PIDs mapping
+	PIDsByPkg  map[string][]int // package/process name -> PIDs mapping
 	Levels     map[Level]bool   // deprecated: kept for compatibility, unused
 }
 
@@ -44,6 +45,10 @@ func (f *Filter) Match(e *Entry) bool {
 		return false
 	}
 
+	if f.Process != "" && !f.matchProcess(e.PID) {
+		return false
+	}
+
 	if !f.matchSearch(e) {
 		return false
 	}
@@ -66,6 +71,23 @@ func (f *Filter) matchPackage(pid int) bool {
 	for _, p := range pids {
 		if p == pid {
 			return true
+		}
+	}
+	return false
+}
+
+func (f *Filter) matchProcess(pid int) bool {
+	if len(f.PIDsByPkg) == 0 || f.Process == "" {
+		return true
+	}
+	for name, pids := range f.PIDsByPkg {
+		if !containsFold(name, f.Process) {
+			continue
+		}
+		for _, p := range pids {
+			if p == pid {
+				return true
+			}
 		}
 	}
 	return false
@@ -111,7 +133,7 @@ func (f *Filter) IsLevelEnabled(level Level) bool {
 }
 
 func (f *Filter) IsActive() bool {
-	if f.Tag != "" || f.PID > 0 || f.Package != "" {
+	if f.Tag != "" || f.PID > 0 || f.Package != "" || f.Process != "" {
 		return true
 	}
 	if f.SearchText != "" || f.SearchRe != nil {

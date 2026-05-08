@@ -26,6 +26,7 @@ const (
 	ModeTagFilter
 	ModePkgFilter
 	ModePidFilter
+	ModeProcessFilter
 	ModeDevicePicker
 	ModePkgPicker
 )

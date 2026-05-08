@@ -15,6 +15,7 @@ type KeyMap struct {
 	Search       key.Binding
 	TagFilter    key.Binding
 	PkgFilter    key.Binding
+	ProcFilter   key.Binding
 	PidFilter    key.Binding
 	Pause        key.Binding
 	Clear        key.Binding
@@ -87,6 +88,10 @@ func DefaultKeyMap() KeyMap {
 		PkgFilter: key.NewBinding(
 			key.WithKeys("p"),
 			key.WithHelp("p", "包名过滤"),
+		),
+		ProcFilter: key.NewBinding(
+			key.WithKeys("P"),
+			key.WithHelp("P", "进程过滤"),
 		),
 		PidFilter: key.NewBinding(
 			key.WithKeys("i"),
@@ -182,7 +187,7 @@ func (k KeyMap) ShortHelp() []key.Binding {
 func (k KeyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.PageUp, k.PageDown, k.Top, k.Bottom},
-		{k.Search, k.TagFilter, k.PkgFilter, k.PidFilter},
+		{k.Search, k.TagFilter, k.PkgFilter, k.ProcFilter, k.PidFilter},
 		{k.LevelV, k.LevelD, k.LevelI, k.LevelW, k.LevelE, k.LevelF},
 		{k.Pause, k.Clear, k.DevicePicker, k.Export, k.BufferSelect},
 		{k.Bookmark, k.NextBookmark, k.PrevBookmark, k.CopyLine},

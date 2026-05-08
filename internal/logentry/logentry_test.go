@@ -198,6 +198,22 @@ func TestFilterMatch(t *testing.T) {
 		}
 	})
 
+	t.Run("process filter", func(t *testing.T) {
+		f := NewFilter()
+		f.Process = "systemui"
+		f.PIDsByPkg = map[string][]int{
+			"com.android.systemui": {1234},
+			"com.android.phone":    {2222},
+		}
+		if !f.Match(entry) {
+			t.Error("should match process name by substring")
+		}
+		f.Process = "PHONE"
+		if f.Match(entry) {
+			t.Error("should not match another process name")
+		}
+	})
+
 	t.Run("nil entry", func(t *testing.T) {
 		f := NewFilter()
 		if f.Match(nil) {
@@ -214,5 +230,10 @@ func TestFilterIsActive(t *testing.T) {
 	f.Tag = "test"
 	if !f.IsActive() {
 		t.Error("filter with tag should be active")
+	}
+	f = NewFilter()
+	f.Process = "systemui"
+	if !f.IsActive() {
+		t.Error("filter with process should be active")
 	}
 }

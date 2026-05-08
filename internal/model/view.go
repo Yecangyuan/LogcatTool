@@ -53,7 +53,7 @@ func (m AppModel) View() tea.View {
 	}
 
 	v.SetContent(content)
-	if m.inputMode >= ModeSearch && m.inputMode <= ModePidFilter {
+	if m.inputMode >= ModeSearch && m.inputMode <= ModeProcessFilter {
 		c := m.filterInput.Cursor()
 		if c != nil {
 			c.Y += 1 // offset for title bar
@@ -259,7 +259,7 @@ func (m AppModel) renderFilterBar() string {
 	}
 
 	// Active filter input or display
-	if m.inputMode >= ModeSearch && m.inputMode <= ModePidFilter {
+	if m.inputMode >= ModeSearch && m.inputMode <= ModeProcessFilter {
 		label := filterModeLabel(m.inputMode)
 		parts = append(parts, ui.FilterLabelStyle.Render(" "+label+": "))
 		parts = append(parts, m.filterInput.View())
@@ -275,6 +275,10 @@ func (m AppModel) renderFilterBar() string {
 		if m.filter.Package != "" {
 			parts = append(parts, ui.FilterActiveStyle.Render(
 				fmt.Sprintf(" 包名:%s", m.filter.Package)))
+		}
+		if m.filter.Process != "" {
+			parts = append(parts, ui.FilterActiveStyle.Render(
+				fmt.Sprintf(" 进程:%s", m.filter.Process)))
 		}
 		if m.filter.PID > 0 {
 			parts = append(parts, ui.FilterActiveStyle.Render(
@@ -344,6 +348,7 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    /           搜索 (支持正则)\n")
 	sb.WriteString("    t           Tag 过滤\n")
 	sb.WriteString("    p           包名过滤 (下拉选择)\n")
+	sb.WriteString("    P           进程名过滤\n")
 	sb.WriteString("    i           PID 过滤\n")
 	sb.WriteString("    1-6         选择最低日志级别 V/D/I/W/E/F\n")
 	sb.WriteString("\n  操作:\n")
@@ -517,6 +522,8 @@ func filterModeLabel(mode InputMode) string {
 		return "Tag"
 	case ModePkgFilter:
 		return "包名"
+	case ModeProcessFilter:
+		return "进程"
 	case ModePidFilter:
 		return "PID"
 	default:
