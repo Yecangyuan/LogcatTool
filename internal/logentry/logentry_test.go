@@ -214,6 +214,17 @@ func TestFilterMatch(t *testing.T) {
 		}
 	})
 
+	t.Run("package filter matches subprocess", func(t *testing.T) {
+		f := NewFilter()
+		f.Package = "com.huawei.smarthome.extend"
+		f.PIDsByPkg = map[string][]int{
+			"com.huawei.smarthome.extend:p9": {1234},
+		}
+		if !f.Match(entry) {
+			t.Error("package filter should match subprocess name with colon suffix")
+		}
+	})
+
 	t.Run("nil entry", func(t *testing.T) {
 		f := NewFilter()
 		if f.Match(nil) {

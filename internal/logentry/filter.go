@@ -64,13 +64,14 @@ func (f *Filter) matchPackage(pid int) bool {
 	if len(f.PIDsByPkg) == 0 || f.Package == "" {
 		return true
 	}
-	pids, ok := f.PIDsByPkg[f.Package]
-	if !ok {
-		return false
-	}
-	for _, p := range pids {
-		if p == pid {
-			return true
+	for name, pids := range f.PIDsByPkg {
+		if name != f.Package && !strings.HasPrefix(name, f.Package+":") {
+			continue
+		}
+		for _, p := range pids {
+			if p == pid {
+				return true
+			}
 		}
 	}
 	return false
