@@ -109,7 +109,7 @@ func DefaultKeyMap() KeyMap {
 			key.WithHelp("x", "崩溃模式"),
 		),
 		Pause: key.NewBinding(
-			key.WithKeys(" "),
+			key.WithKeys("space"),
 			key.WithHelp("Space", "暂停/恢复"),
 		),
 		Clear: key.NewBinding(

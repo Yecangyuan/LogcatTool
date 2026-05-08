@@ -369,6 +369,9 @@ func (m AppModel) renderStatusBar() string {
 	}
 	if m.paused {
 		left += "  ⏸暂停中"
+		if len(m.pausedBuffer) > 0 {
+			left += fmt.Sprintf("  缓冲:%d", len(m.pausedBuffer))
+		}
 	}
 	if len(m.bookmarks) > 0 {
 		left += fmt.Sprintf("  🔖%d", len(m.bookmarks))

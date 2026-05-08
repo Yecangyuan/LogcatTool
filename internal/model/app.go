@@ -118,6 +118,7 @@ type AppModel struct {
 	displayCount  int
 	bookmarks     map[int]bool
 	statusMsg     string
+	pausedBuffer  []*logentry.Entry
 
 	filePath     string // non-empty when reading from file
 	presetSerial string // preset device serial from CLI

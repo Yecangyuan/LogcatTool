@@ -39,26 +39,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, waitForEntries(m.entryChan))
 
 	case LogEntriesMsg:
-		if !m.paused {
-			for _, entry := range msg {
-				entry.Index = m.totalCount
-				m.totalCount++
-				m.preRenderEntry(entry)
-				m.allEntries.Push(entry)
-				if m.filter.Match(entry) {
-					m.filtered = append(m.filtered, entry)
-					m.appendDisplayRow(entry)
-				}
-			}
-			m.filteredCount = len(m.filtered)
-			m.displayCount = len(m.displayRows)
-			// Prune filtered list if ring buffer overflowed
-			if m.totalCount > m.allEntries.Cap() && len(m.filtered) > m.allEntries.Cap()*2 {
-				m.refilter()
-			}
-			if m.autoScroll {
-				m.scrollToBottom()
-			}
+		if m.paused {
+			m.pausedBuffer = append(m.pausedBuffer, msg...)
+		} else {
+			m.ingestEntries(msg)
 		}
 		if m.entryChan != nil {
 			cmds = append(cmds, waitForEntries(m.entryChan))
@@ -190,7 +174,14 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.paused {
 			m.statusMsg = "⏸ 已暂停"
 		} else {
-			m.statusMsg = "▶ 已恢复"
+			buffered := len(m.pausedBuffer)
+			if buffered > 0 {
+				m.ingestEntries(m.pausedBuffer)
+				m.pausedBuffer = nil
+				m.statusMsg = fmt.Sprintf("▶ 已恢复，补入 %d 条日志", buffered)
+			} else {
+				m.statusMsg = "▶ 已恢复"
+			}
 		}
 		return m, nil
 
@@ -198,6 +189,7 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.allEntries.Clear()
 		m.filtered = nil
 		m.displayRows = nil
+		m.pausedBuffer = nil
 		m.totalCount = 0
 		m.filteredCount = 0
 		m.displayCount = 0
@@ -644,6 +636,27 @@ func (m *AppModel) refilter() {
 		m.scrollToBottom()
 	}
 	m.clampScroll()
+}
+
+func (m *AppModel) ingestEntries(entries []*logentry.Entry) {
+	for _, entry := range entries {
+		entry.Index = m.totalCount
+		m.totalCount++
+		m.preRenderEntry(entry)
+		m.allEntries.Push(entry)
+		if m.filter.Match(entry) {
+			m.filtered = append(m.filtered, entry)
+			m.appendDisplayRow(entry)
+		}
+	}
+	m.filteredCount = len(m.filtered)
+	m.displayCount = len(m.displayRows)
+	if m.totalCount > m.allEntries.Cap() && len(m.filtered) > m.allEntries.Cap()*2 {
+		m.refilter()
+	}
+	if m.autoScroll {
+		m.scrollToBottom()
+	}
 }
 
 func (m *AppModel) rebuildDisplayRows() {
