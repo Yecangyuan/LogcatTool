@@ -172,6 +172,10 @@ type AppModel struct {
 	activePreset int
 	presetSlots  [3]filterPreset
 
+	// Cached stats
+	cachedStatsRows []statsRow
+	statsDirty      bool
+
 	// Favorites
 	favoritePackages  map[string]bool
 	favoriteProcesses map[string]bool
@@ -335,6 +339,7 @@ func New(opts Options) AppModel {
 		favoriteProcesses: make(map[string]bool),
 		processByPID:      make(map[int]string),
 		packageByPID:      make(map[int]string),
+		statsDirty:        true,
 	}
 }
 

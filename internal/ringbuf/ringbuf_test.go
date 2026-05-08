@@ -88,3 +88,34 @@ func TestRingBuffer_OutOfBounds(t *testing.T) {
 		t.Errorf("Get(5) = %d, want 0", got)
 	}
 }
+
+func TestRingBuffer_ForEachAndLast(t *testing.T) {
+	rb := New[int](3)
+	for i := 0; i < 5; i++ {
+		rb.Push(i)
+	}
+
+	var got []int
+	rb.ForEach(func(item int) bool {
+		got = append(got, item)
+		return true
+	})
+
+	want := []int{2, 3, 4}
+	if len(got) != len(want) {
+		t.Fatalf("ForEach len = %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("ForEach[%d] = %d, want %d", i, got[i], want[i])
+		}
+	}
+
+	last, ok := rb.Last()
+	if !ok {
+		t.Fatal("Last() should report ok")
+	}
+	if last != 4 {
+		t.Fatalf("Last() = %d, want 4", last)
+	}
+}

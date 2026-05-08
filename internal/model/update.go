@@ -203,6 +203,7 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.scrollOffset = 0
 		m.bookmarks = make(map[int]bool)
 		m.statusMsg = "日志已清除"
+		m.invalidateStats()
 		// Also clear device logcat buffer
 		if m.filePath == "" && m.adbPath != "" {
 			serial := ""
@@ -272,6 +273,7 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.StatsPanel):
 		m.inputMode = ModeStatsPanel
 		m.statsSelection = 0
+		m.ensureStatsCache()
 		return m, nil
 
 	case key.Matches(msg, m.keys.PidFilter):
@@ -568,6 +570,7 @@ func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.favoritePackages[selected] = true
 			m.statusMsg = fmt.Sprintf("已收藏应用: %s", selected)
 		}
+		m.invalidateStats()
 		m.filterPackageList()
 		return m, nil
 
@@ -612,7 +615,8 @@ func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m AppModel) handleStatsPanelKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	rows := m.buildStatsRows()
+	m.ensureStatsCache()
+	rows := m.cachedStatsRows
 	if m.statsSelection >= len(rows) && len(rows) > 0 {
 		m.statsSelection = len(rows) - 1
 	}
@@ -743,13 +747,23 @@ func (m *AppModel) applyFilterInput() {
 }
 
 func (m *AppModel) refilter() {
-	all := m.allEntries.All()
-	if len(all) > 0 {
-		m.filter.ReferenceTime = all[len(all)-1].Timestamp
+	if latest, ok := m.allEntries.Last(); ok && latest != nil {
+		m.filter.ReferenceTime = latest.Timestamp
 	}
-	m.filtered = m.filter.ApplyAll(all)
+	if m.filtered != nil {
+		m.filtered = m.filtered[:0]
+	}
+	active := m.filter.IsActive()
+	m.allEntries.ForEach(func(entry *logentry.Entry) bool {
+		if !active || m.filter.Match(entry) {
+			m.filtered = append(m.filtered, entry)
+		}
+		return true
+	})
 	m.filteredCount = len(m.filtered)
 	m.rebuildDisplayRows()
+	m.invalidateStats()
+	m.refreshStatsIfVisible()
 	if m.autoScroll {
 		m.scrollToBottom()
 	}
@@ -781,6 +795,8 @@ func (m *AppModel) ingestEntries(entries []*logentry.Entry) {
 	}
 	m.filteredCount = len(m.filtered)
 	m.displayCount = len(m.displayRows)
+	m.invalidateStats()
+	m.refreshStatsIfVisible()
 	if m.totalCount > m.allEntries.Cap() && len(m.filtered) > m.allEntries.Cap()*2 {
 		m.refilter()
 	}
@@ -847,6 +863,8 @@ func (m *AppModel) rebuildPIDLookups() {
 			m.packageByPID[pid] = pkg
 		}
 	}
+	m.invalidateStats()
+	m.refreshStatsIfVisible()
 }
 
 func packageNameFromProcess(name string) string {
@@ -917,6 +935,7 @@ func (m *AppModel) toggleCurrentFavorite() {
 			m.favoriteProcesses[process] = true
 			m.statusMsg = fmt.Sprintf("已收藏进程: %s", process)
 		}
+		m.invalidateStats()
 		return
 	}
 	pkg := m.packageByPID[row.Entry.PID]
@@ -928,6 +947,7 @@ func (m *AppModel) toggleCurrentFavorite() {
 			m.favoritePackages[pkg] = true
 			m.statusMsg = fmt.Sprintf("已收藏应用: %s", pkg)
 		}
+		m.invalidateStats()
 		return
 	}
 	m.statusMsg = "当前日志没有可识别的应用/进程"
@@ -943,6 +963,7 @@ func (m *AppModel) toggleFavoriteForStatsRow(row statsRow) {
 			m.favoritePackages[row.Value] = true
 			m.statusMsg = fmt.Sprintf("已收藏应用: %s", row.Value)
 		}
+		m.invalidateStats()
 	case statsProcess:
 		if m.favoriteProcesses[row.Value] {
 			delete(m.favoriteProcesses, row.Value)
@@ -951,6 +972,7 @@ func (m *AppModel) toggleFavoriteForStatsRow(row statsRow) {
 			m.favoriteProcesses[row.Value] = true
 			m.statusMsg = fmt.Sprintf("已收藏进程: %s", row.Value)
 		}
+		m.invalidateStats()
 	default:
 		m.statusMsg = "该统计项不支持收藏"
 	}
@@ -978,7 +1000,7 @@ func (m *AppModel) applyStatsRow(row statsRow) tea.Cmd {
 	return nil
 }
 
-func (m AppModel) buildStatsRows() []statsRow {
+func (m AppModel) computeStatsRows() []statsRow {
 	levelCounts := make(map[logentry.Level]int)
 	tagCounts := make(map[string]int)
 	processCounts := make(map[string]int)
@@ -1054,6 +1076,32 @@ func topCountRows(section string, kind statsKind, counts map[string]int, favorit
 
 func containsFoldLocal(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
+
+func (m *AppModel) invalidateStats() {
+	m.statsDirty = true
+	m.cachedStatsRows = nil
+}
+
+func (m *AppModel) ensureStatsCache() {
+	if !m.statsDirty && m.cachedStatsRows != nil {
+		return
+	}
+	m.cachedStatsRows = m.computeStatsRows()
+	m.statsDirty = false
+}
+
+func (m *AppModel) refreshStatsIfVisible() {
+	if m.inputMode == ModeStatsPanel {
+		m.ensureStatsCache()
+	}
+}
+
+func (m AppModel) statsRows() []statsRow {
+	if !m.statsDirty && m.cachedStatsRows != nil {
+		return m.cachedStatsRows
+	}
+	return m.computeStatsRows()
 }
 
 func (m AppModel) activeNameFilterStatus() string {

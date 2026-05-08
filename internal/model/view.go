@@ -567,7 +567,7 @@ func (m AppModel) overlayPkgPicker(bg string) string {
 }
 
 func (m AppModel) overlayStatsPanel(bg string) string {
-	rows := m.buildStatsRows()
+	rows := m.statsRows()
 	var sb strings.Builder
 	sb.WriteString(ui.HelpTitleStyle.Render("统计面板") + "\n\n")
 

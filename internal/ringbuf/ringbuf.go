@@ -78,6 +78,31 @@ func (r *RingBuffer[T]) All() []T {
 	return r.Slice(0, r.Len())
 }
 
+// ForEach iterates items in logical order (oldest first) without allocating.
+// Returning false from fn stops iteration early.
+func (r *RingBuffer[T]) ForEach(fn func(item T) bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for i := 0; i < r.size; i++ {
+		if !fn(r.items[r.physicalIndex(i)]) {
+			return
+		}
+	}
+}
+
+// Last returns the most recent item.
+func (r *RingBuffer[T]) Last() (T, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var zero T
+	if r.size == 0 {
+		return zero, false
+	}
+	return r.items[r.physicalIndex(r.size-1)], true
+}
+
 func (r *RingBuffer[T]) Clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
