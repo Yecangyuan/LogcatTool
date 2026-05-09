@@ -762,6 +762,7 @@ func (m *AppModel) refilter() {
 	})
 	m.filteredCount = len(m.filtered)
 	m.rebuildDisplayRows()
+	m.pruneStaleBookmarks()
 	m.invalidateStats()
 	m.refreshStatsIfVisible()
 	if m.autoScroll {
@@ -782,6 +783,7 @@ func (m *AppModel) ingestEntries(entries []*logentry.Entry) {
 		m.allEntries.Push(entry)
 		m.maybeTriggerAlert(entry)
 	}
+	m.pruneStaleBookmarks()
 	m.filter.ReferenceTime = latest
 	if m.filter.TimeWindow > 0 {
 		m.refilter()
@@ -1219,6 +1221,21 @@ func (m *AppModel) isAtBottom() bool {
 		return true
 	}
 	return m.scrollOffset >= maxOffset
+}
+
+func (m *AppModel) pruneStaleBookmarks() {
+	if len(m.bookmarks) == 0 {
+		return
+	}
+	oldestIndex := m.totalCount - m.allEntries.Len()
+	if oldestIndex < 0 {
+		oldestIndex = 0
+	}
+	for idx := range m.bookmarks {
+		if idx < oldestIndex || idx >= m.totalCount {
+			delete(m.bookmarks, idx)
+		}
+	}
 }
 
 func (m AppModel) calcViewHeight() int {
