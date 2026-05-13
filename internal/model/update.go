@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/Yecangyuan/LogcatTool/internal/adb"
 	"github.com/Yecangyuan/LogcatTool/internal/logentry"
@@ -718,7 +720,7 @@ func (m AppModel) handleFilterInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	}
 
 	var cmd tea.Cmd
-	m.filterInput, cmd = m.filterInput.Update(msg)
+	m.filterInput, cmd = m.filterInput.Update(normalizeTextInputKey(msg))
 	return m, cmd
 }
 
@@ -1236,6 +1238,32 @@ func (m *AppModel) pruneStaleBookmarks() {
 			delete(m.bookmarks, idx)
 		}
 	}
+}
+
+func normalizeTextInputKey(msg tea.KeyPressMsg) tea.KeyPressMsg {
+	key := msg.Key()
+	if key.Text != "" {
+		return msg
+	}
+
+	if key.ShiftedCode != 0 && unicode.IsPrint(key.ShiftedCode) && !unicode.IsControl(key.ShiftedCode) {
+		key.Text = string(key.ShiftedCode)
+		return tea.KeyPressMsg(key)
+	}
+	if key.Code != 0 && unicode.IsPrint(key.Code) && !unicode.IsControl(key.Code) {
+		key.Text = string(key.Code)
+		return tea.KeyPressMsg(key)
+	}
+
+	if s := msg.String(); s == "space" {
+		key.Text = " "
+		return tea.KeyPressMsg(key)
+	} else if utf8.RuneCountInString(s) == 1 {
+		key.Text = s
+		return tea.KeyPressMsg(key)
+	}
+
+	return msg
 }
 
 func (m AppModel) calcViewHeight() int {
