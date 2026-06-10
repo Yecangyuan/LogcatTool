@@ -99,6 +99,11 @@ func (m AppModel) renderLogView() string {
 	hasSearch := m.filter.SearchRe != nil || m.filter.SearchText != ""
 
 	for i := start; i < end; i++ {
+		// Skip folded crash stack frames (not the head)
+		if m.isInFoldedCrashBlock(i) && !m.isFoldedCrashHead(i) {
+			continue
+		}
+
 		row := m.displayRows[i]
 		entry := row.Entry
 
@@ -115,6 +120,16 @@ func (m AppModel) renderLogView() string {
 			line += lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(
 				fmt.Sprintf(" ×%d", row.Count),
 			)
+		}
+
+		// Folded crash stack indicator
+		if m.isFoldedCrashHead(i) {
+			foldedCount := m.foldedCrashCount(i)
+			if foldedCount > 1 {
+				line += lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(
+					fmt.Sprintf("  ...(%d more)", foldedCount-1),
+				)
+			}
 		}
 
 		line = rowPrefix(i == m.scrollOffset, m.bookmarks[entry.Index]) + line
@@ -402,6 +417,12 @@ func (m AppModel) renderStatusBar() string {
 		left += "  🚨" + truncateLabel(m.lastAlert, 20)
 	}
 
+	// Sparkline
+	sparkline := m.renderSparkline()
+	if sparkline != "" {
+		left += "  " + lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Render(sparkline)
+	}
+
 	right := " /:搜索 Space:暂停 ?:帮助 q:退出 "
 	if m.statusMsg != "" {
 		right = " " + m.statusMsg + " │" + right
@@ -441,7 +462,8 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    Space       暂停/恢复日志流\n")
 	sb.WriteString("    c           清除日志 (同时清除设备缓冲区)\n")
 	sb.WriteString("    d           选择设备\n")
-	sb.WriteString("    e           导出日志\n")
+	sb.WriteString("    e           导出日志 (文本)\n")
+	sb.WriteString("    Ctrl+e      导出日志 (JSON)\n")
 	sb.WriteString("    b           添加/移除书签\n")
 	sb.WriteString("    n/N         下一个/上一个书签\n")
 	sb.WriteString("    y           复制当前行到剪贴板\n")
@@ -449,7 +471,9 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    a           打开统计面板\n")
 	sb.WriteString("    F           收藏当前应用/进程\n")
 	sb.WriteString("    z           折叠连续重复日志\n")
+	sb.WriteString("    o           折叠/展开崩溃栈帧\n")
 	sb.WriteString("    v           切换详情面板\n")
+	sb.WriteString("    T           跳转到指定时间\n")
 	sb.WriteString("    [ / ]       切换预设槽并加载\n")
 	sb.WriteString("    m / M       保存/清空当前预设槽\n")
 	sb.WriteString("    w           切换换行模式\n")

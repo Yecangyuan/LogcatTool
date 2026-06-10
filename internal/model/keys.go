@@ -49,6 +49,9 @@ type KeyMap struct {
 	LevelW       key.Binding
 	LevelE       key.Binding
 	LevelF       key.Binding
+	GotoTime     key.Binding
+	FoldToggle   key.Binding
+	ExportJSON   key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -237,6 +240,18 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("6"),
 			key.WithHelp("6", "Fatal"),
 		),
+		GotoTime: key.NewBinding(
+			key.WithKeys("T"),
+			key.WithHelp("T", "跳转到时间"),
+		),
+		FoldToggle: key.NewBinding(
+			key.WithKeys("o"),
+			key.WithHelp("o", "折叠栈帧"),
+		),
+		ExportJSON: key.NewBinding(
+			key.WithKeys("ctrl+e"),
+			key.WithHelp("Ctrl+e", "导出JSON"),
+		),
 	}
 }
 
@@ -250,9 +265,9 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Search, k.TagFilter, k.TagExclude, k.PkgFilter, k.ProcFilter, k.PidFilter},
 		{k.CrashMode, k.TimeRange, k.StatsPanel, k.Favorite, k.AlertKeyword},
 		{k.LevelV, k.LevelD, k.LevelI, k.LevelW, k.LevelE, k.LevelF},
-		{k.Pause, k.Clear, k.DevicePicker, k.Export, k.BufferSelect},
+		{k.Pause, k.Clear, k.DevicePicker, k.Export, k.ExportJSON, k.BufferSelect},
 		{k.Bookmark, k.NextBookmark, k.PrevBookmark, k.CopyLine, k.ToggleDetail},
-		{k.WrapToggle, k.Collapse, k.AutoScroll, k.PresetPrev, k.PresetNext},
-		{k.PresetSave, k.PresetClear, k.Help, k.Quit},
+		{k.WrapToggle, k.Collapse, k.FoldToggle, k.AutoScroll, k.PresetPrev, k.PresetNext},
+		{k.GotoTime, k.PresetSave, k.PresetClear, k.Help, k.Quit},
 	}
 }

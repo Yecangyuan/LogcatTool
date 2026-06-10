@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Yecangyuan/LogcatTool/internal/adb"
+	"github.com/Yecangyuan/LogcatTool/internal/config"
 	"github.com/Yecangyuan/LogcatTool/internal/logentry"
 	"github.com/Yecangyuan/LogcatTool/internal/ringbuf"
 	"github.com/Yecangyuan/LogcatTool/internal/source"
@@ -32,6 +33,7 @@ const (
 	ModeStatsPanel
 	ModeDevicePicker
 	ModePkgPicker
+	ModeGotoTime
 )
 
 func isFilterInputMode(mode InputMode) bool {
@@ -185,6 +187,20 @@ type AppModel struct {
 	// Alerts
 	alertKeyword string
 	lastAlert    string
+
+	// Search history
+	searchHistory []string
+	historyIdx    int // -1 means not browsing history
+
+	// Crash stack folding
+	crashFolded map[int]bool // entry.Index -> folded
+
+	// Sparkline
+	sparklineBins [20]int
+	sparklineIdx  int
+
+	// Config persistence
+	cfg config.Config
 }
 
 // --- Messages ---
@@ -206,6 +222,8 @@ type PackageListMsg []string
 type ClearDeviceDoneMsg struct{}
 
 type ReconnectTickMsg struct{}
+
+type SparklineTickMsg struct{}
 
 type SourceStartedMsg struct {
 	Source  source.LogSource
@@ -304,6 +322,12 @@ func reconnectTickCmd() tea.Cmd {
 	})
 }
 
+func sparklineTickCmd() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return SparklineTickMsg{}
+	})
+}
+
 // --- Constructor ---
 
 type Options struct {
@@ -323,11 +347,16 @@ func New(opts Options) AppModel {
 	ti.CharLimit = 200
 	ti.SetWidth(40)
 
-	return AppModel{
+	cfg, _ := config.Load()
+
+	m := AppModel{
 		allEntries:        ringbuf.New[*logentry.Entry](opts.BufferSize),
 		filter:            logentry.NewFilter(),
 		adbPath:           opts.ADBPath,
-		autoScroll:        true,
+		autoScroll:        cfg.AutoScroll,
+		wrapLines:         cfg.WrapLines,
+		showDetails:       cfg.ShowDetails,
+		collapseDupes:     cfg.CollapseDupes,
 		keys:              DefaultKeyMap(),
 		helpModel:         help.New(),
 		filterInput:       ti,
@@ -335,18 +364,87 @@ func New(opts Options) AppModel {
 		filePath:          opts.FilePath,
 		presetSerial:      opts.Serial,
 		logBuffer:         BufferAll,
-		favoritePackages:  make(map[string]bool),
-		favoriteProcesses: make(map[string]bool),
+		favoritePackages:  cfg.FavoritePackages,
+		favoriteProcesses: cfg.FavoriteProcesses,
 		processByPID:      make(map[int]string),
 		packageByPID:      make(map[int]string),
 		statsDirty:        true,
+		alertKeyword:      cfg.AlertKeyword,
+		searchHistory:     cfg.SearchHistory,
+		crashFolded:       make(map[int]bool),
+		cfg:               cfg,
 	}
+
+	if m.favoritePackages == nil {
+		m.favoritePackages = make(map[string]bool)
+	}
+	if m.favoriteProcesses == nil {
+		m.favoriteProcesses = make(map[string]bool)
+	}
+
+	// Restore presets
+	for i := range cfg.Presets {
+		if cfg.Presets[i].Used {
+			m.presetSlots[i] = filterPreset{
+				Used: true,
+				Snapshot: logentry.Snapshot{
+					MinLevel:   logentry.ParseLevelString(cfg.Presets[i].MinLevel),
+					Package:    cfg.Presets[i].Package,
+					Process:    cfg.Presets[i].Process,
+					Tag:        cfg.Presets[i].Tag,
+					TagExclude: cfg.Presets[i].TagExclude,
+					PID:        cfg.Presets[i].PID,
+					SearchText: cfg.Presets[i].SearchText,
+					CrashOnly:  cfg.Presets[i].CrashOnly,
+					TimeWindow: time.Duration(cfg.Presets[i].TimeWindowSec) * time.Second,
+				},
+			}
+		}
+	}
+
+	return m
 }
 
 func (m AppModel) Init() tea.Cmd {
+	cmds := []tea.Cmd{sparklineTickCmd()}
 	if m.filePath != "" {
 		src := source.NewFileSource(m.filePath)
-		return startSourceCmd(src)
+		cmds = append(cmds, startSourceCmd(src))
+	} else {
+		cmds = append(cmds, listDevicesCmd(m.adbPath))
 	}
-	return listDevicesCmd(m.adbPath)
+	return tea.Batch(cmds...)
+}
+
+func (m AppModel) saveConfig() {
+	m.cfg.FavoritePackages = m.favoritePackages
+	m.cfg.FavoriteProcesses = m.favoriteProcesses
+	m.cfg.AlertKeyword = m.alertKeyword
+	m.cfg.SearchHistory = m.searchHistory
+	m.cfg.CollapseDupes = m.collapseDupes
+	m.cfg.WrapLines = m.wrapLines
+	m.cfg.ShowDetails = m.showDetails
+	m.cfg.AutoScroll = m.autoScroll
+
+	for i := range m.presetSlots {
+		if m.presetSlots[i].Used {
+			s := m.presetSlots[i].Snapshot
+			m.cfg.Presets[i] = config.Preset{
+				Used:          true,
+				MinLevel:      s.MinLevel.Char(),
+				Package:       s.Package,
+				Process:       s.Process,
+				Tag:           s.Tag,
+				TagExclude:    s.TagExclude,
+				PID:           s.PID,
+				SearchText:    s.SearchText,
+				CrashOnly:     s.CrashOnly,
+				TimeWindowSec: int(s.TimeWindow.Seconds()),
+			}
+		} else {
+			m.cfg.Presets[i] = config.Preset{}
+		}
+	}
+
+	_ = config.Save(m.cfg)
 }

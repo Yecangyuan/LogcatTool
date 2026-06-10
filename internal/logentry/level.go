@@ -32,6 +32,27 @@ func ParseLevel(c byte) Level {
 	return LevelUnknown
 }
 
+func ParseLevelString(s string) Level {
+	switch s {
+	case "Verbose", "V":
+		return LevelVerbose
+	case "Debug", "D":
+		return LevelDebug
+	case "Info", "I":
+		return LevelInfo
+	case "Warn", "W":
+		return LevelWarn
+	case "Error", "E":
+		return LevelError
+	case "Fatal", "F":
+		return LevelFatal
+	case "Silent", "S":
+		return LevelSilent
+	default:
+		return LevelUnknown
+	}
+}
+
 func (l Level) Char() string {
 	switch l {
 	case LevelVerbose:

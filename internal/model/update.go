@@ -1,7 +1,9 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -79,6 +81,10 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case SparklineTickMsg:
+		m.rotateSparkline()
+		cmds = append(cmds, sparklineTickCmd())
+
 	case LogErrorMsg:
 		m.statusMsg = fmt.Sprintf("错误: %v", msg.Err)
 
@@ -151,6 +157,14 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
+func (m AppModel) saveAndQuit() (tea.Model, tea.Cmd) {
+	m.saveConfig()
+	if m.source != nil {
+		m.source.Stop()
+	}
+	return m, tea.Quit
+}
+
 func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Input mode handling
 	switch m.inputMode {
@@ -169,10 +183,7 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Normal mode
 	switch {
 	case key.Matches(msg, m.keys.Quit):
-		if m.source != nil {
-			m.source.Stop()
-		}
-		return m, tea.Quit
+		return m.saveAndQuit()
 
 	case key.Matches(msg, m.keys.Help):
 		m.showHelp = !m.showHelp
@@ -405,6 +416,24 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.CopyLine):
 		return m, m.copyCurrentLine()
 
+	case key.Matches(msg, m.keys.GotoTime):
+		m.inputMode = ModeGotoTime
+		m.filterInput.Placeholder = "时间 (如 14:32:05 或 -5m)..."
+		m.filterInput.SetValue("")
+		m.filterInput.Focus()
+		return m, nil
+
+	case key.Matches(msg, m.keys.FoldToggle):
+		m.toggleCrashFold()
+		return m, nil
+
+	case key.Matches(msg, m.keys.ExportJSON):
+		if len(m.filtered) > 0 {
+			return m, exportJSONCmd(m.filtered)
+		}
+		m.statusMsg = "没有日志可导出"
+		return m, nil
+
 	case key.Matches(msg, m.keys.CrashMode):
 		m.filter.CrashOnly = !m.filter.CrashOnly
 		m.refilter()
@@ -535,6 +564,11 @@ func (m AppModel) handleDevicePickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 	return m, nil
 }
 
+// pkgPickerNavUp/Down only match pure arrow keys, so that j/k/h/l can be
+// typed freely into the search text box without triggering list navigation.
+var pkgPickerNavUp = key.NewBinding(key.WithKeys("up"))
+var pkgPickerNavDown = key.NewBinding(key.WithKeys("down"))
+
 func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Cancel):
@@ -545,13 +579,13 @@ func (m AppModel) handlePkgPickerKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.inputMode = ModeNormal
 		return m, nil
 
-	case key.Matches(msg, m.keys.Up):
+	case key.Matches(msg, pkgPickerNavUp):
 		if m.pkgPickerIdx > 0 {
 			m.pkgPickerIdx--
 		}
 		return m, nil
 
-	case key.Matches(msg, m.keys.Down):
+	case key.Matches(msg, pkgPickerNavDown):
 		if m.pkgPickerIdx < len(m.filteredPackages)-1 {
 			m.pkgPickerIdx++
 		}
@@ -687,6 +721,7 @@ func (m AppModel) handleFilterInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 	case key.Matches(msg, m.keys.Cancel):
 		m.inputMode = ModeNormal
 		m.filterInput.Blur()
+		m.historyIdx = -1
 		return m, nil
 
 	case key.Matches(msg, m.keys.Confirm):
@@ -694,6 +729,11 @@ func (m AppModel) handleFilterInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		m.applyFilterInput()
 		m.inputMode = ModeNormal
 		m.filterInput.Blur()
+		m.historyIdx = -1
+		if mode == ModeSearch && m.filter.SearchText != "" {
+			m.cfg.AddSearchHistory(m.filter.SearchText)
+			m.searchHistory = m.cfg.SearchHistory
+		}
 		if mode == ModeProcessFilter {
 			if m.filter.Process == "" {
 				m.refilter()
@@ -715,7 +755,38 @@ func (m AppModel) handleFilterInputKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 			}
 			return m, nil
 		}
+		if mode == ModeGotoTime {
+			m.gotoTime(m.filterInput.Value())
+			return m, nil
+		}
 		m.refilter()
+		return m, nil
+
+	// Search history navigation
+	case m.inputMode == ModeSearch && msg.String() == "up":
+		if len(m.searchHistory) == 0 {
+			return m, nil
+		}
+		if m.historyIdx < 0 {
+			m.historyIdx = len(m.searchHistory)
+		}
+		if m.historyIdx > 0 {
+			m.historyIdx--
+			m.filterInput.SetValue(m.searchHistory[m.historyIdx])
+		}
+		return m, nil
+
+	case m.inputMode == ModeSearch && msg.String() == "down":
+		if m.historyIdx < 0 || len(m.searchHistory) == 0 {
+			return m, nil
+		}
+		m.historyIdx++
+		if m.historyIdx >= len(m.searchHistory) {
+			m.historyIdx = -1
+			m.filterInput.SetValue("")
+		} else {
+			m.filterInput.SetValue(m.searchHistory[m.historyIdx])
+		}
 		return m, nil
 	}
 
@@ -785,6 +856,7 @@ func (m *AppModel) ingestEntries(entries []*logentry.Entry) {
 		m.allEntries.Push(entry)
 		m.maybeTriggerAlert(entry)
 	}
+	m.updateSparkline(len(entries))
 	m.pruneStaleBookmarks()
 	m.filter.ReferenceTime = latest
 	if m.filter.TimeWindow > 0 {
@@ -1401,3 +1473,221 @@ func levelStyle(l logentry.Level) lipgloss.Style {
 }
 
 const bookmarkMarker = "🔖"
+
+// --- Goto Time ---
+
+func (m *AppModel) gotoTime(val string) {
+	if val == "" {
+		m.statusMsg = "请输入时间"
+		return
+	}
+	ts := m.parseTimeInput(val)
+	if ts.IsZero() {
+		m.statusMsg = "无法解析时间格式"
+		return
+	}
+	idx := m.binarySearchTime(ts)
+	if idx >= 0 && idx < len(m.displayRows) {
+		m.scrollOffset = idx
+		m.autoScroll = false
+		m.statusMsg = fmt.Sprintf("已跳转到 %s", m.displayRows[idx].Entry.Timestamp.Format("15:04:05.000"))
+	} else {
+		m.statusMsg = "未找到对应时间的日志"
+	}
+}
+
+func (m *AppModel) parseTimeInput(val string) time.Time {
+	// Relative: -5m, -30s, -2h
+	if strings.HasPrefix(val, "-") {
+		d, err := time.ParseDuration(val)
+		if err == nil {
+			if latest, ok := m.allEntries.Last(); ok {
+				return latest.Timestamp.Add(d)
+			}
+		}
+	}
+	// Absolute time: 14:32:05, 14:32:05.123
+	now := time.Now()
+	formats := []string{"15:04:05.000", "15:04:05", "2006-01-02 15:04:05"}
+	for _, f := range formats {
+		if t, err := time.Parse(f, val); err == nil {
+			return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), now.Location())
+		}
+	}
+	return time.Time{}
+}
+
+func (m *AppModel) binarySearchTime(ts time.Time) int {
+	lo, hi := 0, len(m.displayRows)
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if m.displayRows[mid].Entry.Timestamp.Before(ts) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo >= len(m.displayRows) {
+		return len(m.displayRows) - 1
+	}
+	return lo
+}
+
+// --- Crash Stack Folding ---
+
+func (m *AppModel) toggleCrashFold() {
+	row := m.currentDisplayRow()
+	if row == nil || row.Entry == nil || !row.Entry.IsCrash || !isStackFrame(row.Entry.Message) {
+		m.statusMsg = "当前日志不是崩溃栈帧"
+		return
+	}
+	// Find the head of this stack block in displayRows
+	displayIdx := m.scrollOffset
+	for displayIdx > 0 {
+		prev := m.displayRows[displayIdx-1].Entry
+		if !prev.IsCrash || !isStackFrame(prev.Message) {
+			break
+		}
+		displayIdx--
+	}
+	headEntry := m.displayRows[displayIdx].Entry
+	idx := headEntry.Index
+	if m.crashFolded[idx] {
+		delete(m.crashFolded, idx)
+		m.statusMsg = "已展开栈帧"
+	} else {
+		m.crashFolded[idx] = true
+		count := m.foldedCrashCount(displayIdx)
+		m.statusMsg = fmt.Sprintf("已折叠 %d 行栈帧", count)
+	}
+}
+
+func isStackFrame(msg string) bool {
+	return strings.HasPrefix(msg, "\tat ") || strings.HasPrefix(msg, "  at ")
+}
+
+// --- Export JSON ---
+
+func exportJSONCmd(entries []*logentry.Entry) tea.Cmd {
+	return func() tea.Msg {
+		filename := fmt.Sprintf("logcat_%s.json", time.Now().Format("20060102_150405"))
+		type jsonEntry struct {
+			Timestamp string `json:"timestamp"`
+			PID       int    `json:"pid"`
+			TID       int    `json:"tid"`
+			Level     string `json:"level"`
+			Tag       string `json:"tag"`
+			Message   string `json:"message"`
+			Raw       string `json:"raw"`
+			IsCrash   bool   `json:"is_crash"`
+		}
+		var out []jsonEntry
+		for _, e := range entries {
+			out = append(out, jsonEntry{
+				Timestamp: e.Timestamp.Format("2006-01-02T15:04:05.000Z07:00"),
+				PID:       e.PID,
+				TID:       e.TID,
+				Level:     e.Level.Char(),
+				Tag:       e.Tag,
+				Message:   e.Message,
+				Raw:       e.Raw,
+				IsCrash:   e.IsCrash,
+			})
+		}
+		data, err := json.MarshalIndent(out, "", "  ")
+		if err != nil {
+			return LogErrorMsg{Err: fmt.Errorf("导出JSON失败: %w", err)}
+		}
+		if err := os.WriteFile(filename, data, 0644); err != nil {
+			return LogErrorMsg{Err: fmt.Errorf("写入JSON失败: %w", err)}
+		}
+		return ExportDoneMsg{Path: filename}
+	}
+}
+
+// --- Sparkline ---
+
+func (m *AppModel) updateSparkline(count int) {
+	m.sparklineBins[m.sparklineIdx] += count
+}
+
+func (m *AppModel) rotateSparkline() {
+	m.sparklineIdx = (m.sparklineIdx + 1) % len(m.sparklineBins)
+	m.sparklineBins[m.sparklineIdx] = 0
+}
+
+func (m AppModel) renderSparkline() string {
+	if m.totalCount == 0 {
+		return ""
+	}
+	max := 1
+	for _, v := range m.sparklineBins {
+		if v > max {
+			max = v
+		}
+	}
+	bars := []string{"▁", "▂", "▃", "▄", "▅", "▆", "▇", "█"}
+	var sb strings.Builder
+	for i := range m.sparklineBins {
+		idx := (m.sparklineIdx + 1 + i) % len(m.sparklineBins)
+		v := m.sparklineBins[idx]
+		bIdx := (v * (len(bars) - 1)) / max
+		sb.WriteString(bars[bIdx])
+	}
+	return sb.String()
+}
+
+// --- Crash block folding helpers ---
+
+func (m AppModel) isInFoldedCrashBlock(displayIdx int) bool {
+	if displayIdx >= len(m.displayRows) {
+		return false
+	}
+	entry := m.displayRows[displayIdx].Entry
+	if !entry.IsCrash || !isStackFrame(entry.Message) {
+		return false
+	}
+	// Find the head of this stack block
+	head := displayIdx
+	for head > 0 {
+		prev := m.displayRows[head-1].Entry
+		if !prev.IsCrash || !isStackFrame(prev.Message) {
+			break
+		}
+		head--
+	}
+	return m.crashFolded[m.displayRows[head].Entry.Index]
+}
+
+func (m AppModel) isFoldedCrashHead(displayIdx int) bool {
+	if displayIdx >= len(m.displayRows) {
+		return false
+	}
+	entry := m.displayRows[displayIdx].Entry
+	if !entry.IsCrash || !isStackFrame(entry.Message) {
+		return false
+	}
+	if !m.isInFoldedCrashBlock(displayIdx) {
+		return false
+	}
+	if displayIdx == 0 {
+		return true
+	}
+	prev := m.displayRows[displayIdx-1].Entry
+	return !prev.IsCrash || !isStackFrame(prev.Message)
+}
+
+func (m AppModel) foldedCrashCount(displayIdx int) int {
+	if !m.isFoldedCrashHead(displayIdx) {
+		return 1
+	}
+	count := 1
+	for i := displayIdx + 1; i < len(m.displayRows); i++ {
+		entry := m.displayRows[i].Entry
+		if !entry.IsCrash || !isStackFrame(entry.Message) {
+			break
+		}
+		count++
+	}
+	return count
+}
