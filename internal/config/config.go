@@ -76,9 +76,9 @@ func DefaultAnomalyConfig() AnomalyConfig {
 		Dimensions: map[string]DimensionConfig{
 			"global":  {Enabled: boolPtr(true)},
 			"level":   {Enabled: boolPtr(true), Multiplier: floatPtr(2.0)},
-			"tag":     {},
-			"pid":     {},
-			"package": {},
+			"tag":     {Enabled: boolPtr(true)},
+			"pid":     {Enabled: boolPtr(true)},
+			"package": {Enabled: boolPtr(true)},
 			"process": {Enabled: boolPtr(false)},
 		},
 	}

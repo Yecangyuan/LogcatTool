@@ -67,6 +67,30 @@ func TestDefaultAnomalyConfig(t *testing.T) {
 		t.Fatalf("expected level.Multiplier == 2.0, got %v", level.Multiplier)
 	}
 
+	tag, ok := cfg.Dimensions["tag"]
+	if !ok {
+		t.Fatal("missing tag dimension")
+	}
+	if tag.Enabled == nil || *tag.Enabled != true {
+		t.Fatalf("expected tag.Enabled == true, got %v", tag.Enabled)
+	}
+
+	pid, ok := cfg.Dimensions["pid"]
+	if !ok {
+		t.Fatal("missing pid dimension")
+	}
+	if pid.Enabled == nil || *pid.Enabled != true {
+		t.Fatalf("expected pid.Enabled == true, got %v", pid.Enabled)
+	}
+
+	packageDim, ok := cfg.Dimensions["package"]
+	if !ok {
+		t.Fatal("missing package dimension")
+	}
+	if packageDim.Enabled == nil || *packageDim.Enabled != true {
+		t.Fatalf("expected package.Enabled == true, got %v", packageDim.Enabled)
+	}
+
 	process, ok := cfg.Dimensions["process"]
 	if !ok {
 		t.Fatal("missing process dimension")
