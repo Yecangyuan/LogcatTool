@@ -18,6 +18,7 @@ type Config struct {
 	WrapLines         bool            `json:"wrap_lines"`
 	ShowDetails       bool            `json:"show_details"`
 	AutoScroll        bool            `json:"auto_scroll"`
+	Anomaly           AnomalyConfig   `json:"anomaly"`
 }
 
 // Preset mirrors filterPreset for JSON serialization.
@@ -32,6 +33,55 @@ type Preset struct {
 	SearchText string `json:"search_text,omitempty"`
 	CrashOnly bool   `json:"crash_only,omitempty"`
 	TimeWindowSec int `json:"time_window_sec,omitempty"`
+}
+
+// DimensionConfig holds per-dimension overrides. Nil/zero means inherit global.
+type DimensionConfig struct {
+	Enabled           *bool    `json:"enabled,omitempty"`
+	RecentWindowSec   *int     `json:"recent_window_sec,omitempty"`
+	BaselineWindowSec *int     `json:"baseline_window_sec,omitempty"`
+	Multiplier        *float64 `json:"multiplier,omitempty"`
+	DropMultiplier    *float64 `json:"drop_multiplier,omitempty"`
+	MinBaseline       *int     `json:"min_baseline,omitempty"`
+}
+
+// AnomalyConfig is persisted user configuration for rate anomaly detection.
+type AnomalyConfig struct {
+	Enabled             bool                       `json:"enabled"`
+	RecentWindowSec     int                        `json:"recent_window_sec"`
+	BaselineWindowSec   int                        `json:"baseline_window_sec"`
+	Multiplier          float64                    `json:"multiplier"`
+	DropMultiplier      float64                    `json:"drop_multiplier"`
+	MinBaseline         int                        `json:"min_baseline"`
+	HighlightWindowSec  int                        `json:"highlight_window_sec"`
+	MaxKeysPerDimension int                        `json:"max_keys_per_dimension"`
+	CooldownSec         int                        `json:"cooldown_sec"`
+	Strategy            string                     `json:"strategy"`
+	Dimensions          map[string]DimensionConfig `json:"dimensions"`
+}
+
+// DefaultAnomalyConfig returns the built-in defaults.
+func DefaultAnomalyConfig() AnomalyConfig {
+	return AnomalyConfig{
+		Enabled:             true,
+		RecentWindowSec:     30,
+		BaselineWindowSec:   300,
+		Multiplier:          3.0,
+		DropMultiplier:      0.0,
+		MinBaseline:         5,
+		HighlightWindowSec:  5,
+		MaxKeysPerDimension: 1000,
+		CooldownSec:         30,
+		Strategy:            "moving_average",
+		Dimensions: map[string]DimensionConfig{
+			"global":  {},
+			"level":   {Multiplier: floatPtr(2.0)},
+			"tag":     {},
+			"pid":     {},
+			"package": {},
+			"process": {Enabled: boolPtr(false)},
+		},
+	}
 }
 
 func dir() string {
