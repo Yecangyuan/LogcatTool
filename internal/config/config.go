@@ -74,8 +74,8 @@ func DefaultAnomalyConfig() AnomalyConfig {
 		CooldownSec:         30,
 		Strategy:            "moving_average",
 		Dimensions: map[string]DimensionConfig{
-			"global":  {},
-			"level":   {Multiplier: floatPtr(2.0)},
+			"global":  {Enabled: boolPtr(true)},
+			"level":   {Enabled: boolPtr(true), Multiplier: floatPtr(2.0)},
 			"tag":     {},
 			"pid":     {},
 			"package": {},
@@ -83,6 +83,9 @@ func DefaultAnomalyConfig() AnomalyConfig {
 		},
 	}
 }
+
+func boolPtr(b bool) *bool           { return &b }
+func floatPtr(f float64) *float64 { return &f }
 
 func dir() string {
 	home, err := os.UserHomeDir()
