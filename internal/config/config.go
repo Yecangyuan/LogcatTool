@@ -23,16 +23,16 @@ type Config struct {
 
 // Preset mirrors filterPreset for JSON serialization.
 type Preset struct {
-	Used      bool   `json:"used"`
-	MinLevel  string `json:"min_level,omitempty"`
-	Package   string `json:"package,omitempty"`
-	Process   string `json:"process,omitempty"`
-	Tag       string `json:"tag,omitempty"`
-	TagExclude string `json:"tag_exclude,omitempty"`
-	PID       int    `json:"pid,omitempty"`
-	SearchText string `json:"search_text,omitempty"`
-	CrashOnly bool   `json:"crash_only,omitempty"`
-	TimeWindowSec int `json:"time_window_sec,omitempty"`
+	Used          bool   `json:"used"`
+	MinLevel      string `json:"min_level,omitempty"`
+	Package       string `json:"package,omitempty"`
+	Process       string `json:"process,omitempty"`
+	Tag           string `json:"tag,omitempty"`
+	TagExclude    string `json:"tag_exclude,omitempty"`
+	PID           int    `json:"pid,omitempty"`
+	SearchText    string `json:"search_text,omitempty"`
+	CrashOnly     bool   `json:"crash_only,omitempty"`
+	TimeWindowSec int    `json:"time_window_sec,omitempty"`
 }
 
 // DimensionConfig holds per-dimension overrides. Nil/zero means inherit global.
@@ -84,8 +84,10 @@ func DefaultAnomalyConfig() AnomalyConfig {
 	}
 }
 
-func boolPtr(b bool) *bool           { return &b }
+func boolPtr(b bool) *bool        { return &b }
 func floatPtr(f float64) *float64 { return &f }
+
+const maxSearchHistory = 20
 
 func dir() string {
 	home, err := os.UserHomeDir()
@@ -145,7 +147,7 @@ func (c *Config) AddSearchHistory(query string) {
 		}
 	}
 	c.SearchHistory = append([]string{query}, filtered...)
-	if len(c.SearchHistory) > 20 {
-		c.SearchHistory = c.SearchHistory[:20]
+	if len(c.SearchHistory) > maxSearchHistory {
+		c.SearchHistory = c.SearchHistory[:maxSearchHistory]
 	}
 }

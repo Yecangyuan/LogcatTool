@@ -136,3 +136,29 @@ func TestDefaultAnomalyConfigRoundTrip(t *testing.T) {
 		t.Fatalf("process enabled want false got %v", process.Enabled)
 	}
 }
+
+func TestLoadSaveRoundTrip(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	cfg := Config{Anomaly: DefaultAnomalyConfig()}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	if !loaded.Anomaly.Enabled {
+		t.Fatal("Anomaly.Enabled lost")
+	}
+	if loaded.Anomaly.Multiplier != 3.0 {
+		t.Fatalf("Anomaly.Multiplier want 3.0 got %v", loaded.Anomaly.Multiplier)
+	}
+
+	level := loaded.Anomaly.Dimensions["level"]
+	if level.Multiplier == nil || *level.Multiplier != 2.0 {
+		t.Fatalf("level multiplier want 2.0 got %v", level.Multiplier)
+	}
+}
