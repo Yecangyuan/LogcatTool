@@ -31,19 +31,29 @@
 
 ### 3.2 异常判定
 
-第一版实现 **移动平均倍数策略**：
+第一版实现 **移动平均倍数策略**，同时支持突增和突降：
 
 ```
-multiplier = recentRate / baselineRate
-异常触发条件：
+ratio = recentRate / baselineRate
+
+spike 触发条件：
   recentRate > minBaseline
   AND baselineRate > 0
-  AND multiplier >= configuredMultiplier
+  AND ratio >= multiplier
+
+drop 触发条件（dropMultiplier > 0 时）：
+  baselineRate > minBaseline
+  AND recentRate > 0
+  AND ratio <= dropMultiplier
 ```
 
 - `recentRate`：最近 `recentWindowSec` 秒的平均每秒日志数。
 - `baselineRate`：过去 `baselineWindowSec` 秒（不含最近窗口）的平均每秒日志数。
 - `minBaseline`：基线最小阈值，防止零星日志导致误报。
+- `multiplier`：突增判定倍数（默认 3.0）。
+- `dropMultiplier`：突降判定倍数（默认 0.0，表示不检测突降）。
+
+同一维度在 `cooldownSec` 内重复触发只更新最后时间，不新增异常条目。
 
 预留 `DetectionStrategy` 接口，后续可接入 Z-score、EWMA 等策略。
 
@@ -100,6 +110,7 @@ internal/config/
 - **维度数量控制**：Tag/PID/Package/Process 维度使用 LRU 淘汰，每个维度最多保留 1000 个活跃键。
 - **Package 动态映射**：通过现有 PID→Package 映射实时解析；PID 重新映射后，后续日志归属到新 Package，旧键按 LRU 淘汰。
 - **暂停模式**：暂停时 detector 不接收新日志，恢复后按日志时间戳正常分桶，不会产生误报。
+- **检测器生命周期**：`model.New` 创建 detector 并启动后台 goroutine，每秒评估一次；程序退出时通过 `tea.Program` 生命周期或 `model` 析构调用 `detector.Stop()` 停止 goroutine。
 
 ## 7. 配置
 
@@ -112,9 +123,11 @@ internal/config/
     "recentWindowSec": 30,
     "baselineWindowSec": 300,
     "multiplier": 3.0,
+    "dropMultiplier": 0.0,
     "minBaseline": 5,
     "highlightWindowSec": 5,
     "maxKeysPerDimension": 1000,
+    "cooldownSec": 30,
     "strategy": "moving_average",
     "dimensions": {
       "global": { "enabled": true },
@@ -143,7 +156,7 @@ internal/config/
 
 ### 9.1 单元测试
 
-- `MovingAverageStrategy`：正常突增、平稳流量、基线为 0、recent 为 0、recent > baseline 等边界。
+- `MovingAverageStrategy`：正常突增、正常突降、平稳流量、基线为 0、recent 为 0、recent > baseline、dropMultiplier 关闭等边界。
 - `TimeSeries`：桶覆盖、秒级聚合、固定长度淘汰。
 - 配置解析：默认值、维度覆盖、无效字段降级。
 
