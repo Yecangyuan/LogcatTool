@@ -14,6 +14,8 @@ import (
 // AnomalyEventsMsg is delivered by the detector listener command.
 type AnomalyEventsMsg []anomaly.Event
 
+const maxAnomalyEvents = 100
+
 type anomalyState struct {
 	events        []anomaly.Event
 	panelOpen     bool
@@ -42,6 +44,12 @@ func (a *anomalyState) applyEvents(events []anomaly.Event, highlightSec int) {
 			a.events = append(a.events, e)
 		}
 	}
+	if len(a.events) > maxAnomalyEvents {
+		a.events = a.events[len(a.events)-maxAnomalyEvents:]
+		if a.selection >= len(a.events) {
+			a.selection = len(a.events) - 1
+		}
+	}
 }
 
 func (a *anomalyState) clear() {
@@ -55,8 +63,8 @@ func (a *anomalyState) isHighlighted(entry *logentry.Entry) bool {
 	}
 	window := time.Duration(a.highlightSec) * time.Second
 	for _, e := range a.events {
-		if entry.Timestamp.After(e.TriggeredAt.Add(-window)) &&
-			entry.Timestamp.Before(e.TriggeredAt.Add(window)) {
+		if entry.Timestamp.After(e.LogTime.Add(-window)) &&
+			entry.Timestamp.Before(e.LogTime.Add(window)) {
 			return true
 		}
 	}

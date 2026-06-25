@@ -25,6 +25,7 @@ var searchHighlightStyle = lipgloss.NewStyle().
 	Bold(true)
 
 var anomalyHighlightStyle = lipgloss.NewStyle().
+	Background(lipgloss.Color("52")).
 	Foreground(lipgloss.Color("196")).
 	Bold(true)
 

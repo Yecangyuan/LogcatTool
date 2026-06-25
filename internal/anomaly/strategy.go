@@ -21,6 +21,11 @@ type MovingAverageOptions struct {
 
 // NewMovingAverageStrategy creates the default strategy.
 func NewMovingAverageStrategy(opts MovingAverageOptions) Strategy {
+	return &movingAverageStrategy{opts: normalizeMovingAverageOptions(opts)}
+}
+
+// normalizeMovingAverageOptions fills in sane defaults without mutating the input.
+func normalizeMovingAverageOptions(opts MovingAverageOptions) MovingAverageOptions {
 	if opts.RecentWindowSec <= 0 {
 		opts.RecentWindowSec = 30
 	}
@@ -33,7 +38,7 @@ func NewMovingAverageStrategy(opts MovingAverageOptions) Strategy {
 	if opts.MinBaseline < 0 {
 		opts.MinBaseline = 0
 	}
-	return &movingAverageStrategy{opts: opts}
+	return opts
 }
 
 type movingAverageStrategy struct {
@@ -56,6 +61,7 @@ func (s *movingAverageStrategy) Evaluate(series *TimeSeries, dim Dimension, key 
 
 	var events []Event
 	now := time.Now()
+	logTime := time.Unix(int64(nowSecond), 0)
 
 	if recentRate >= baselineRate*s.opts.Multiplier {
 		ratio := recentRate / baselineRate
@@ -70,6 +76,7 @@ func (s *movingAverageStrategy) Evaluate(series *TimeSeries, dim Dimension, key 
 			BaselineRate: baselineRate,
 			Ratio:        ratio,
 			TriggeredAt:  now,
+			LogTime:      logTime,
 		})
 	}
 
@@ -83,6 +90,7 @@ func (s *movingAverageStrategy) Evaluate(series *TimeSeries, dim Dimension, key 
 			BaselineRate: baselineRate,
 			Ratio:        ratio,
 			TriggeredAt:  now,
+			LogTime:      logTime,
 		})
 	}
 

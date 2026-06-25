@@ -205,7 +205,6 @@ type AppModel struct {
 	anomalyDetector *anomaly.Detector
 	anomaly         anomalyState
 	anomalyEventsCh chan []anomaly.Event
-	anomalyDone     chan struct{}
 
 	// Config persistence
 	cfg config.Config
@@ -359,7 +358,7 @@ func (m *AppModel) anomalyDetectorLoop() {
 				default:
 				}
 			}
-		case <-m.anomalyDone:
+		case <-m.anomalyDetector.Done():
 			return
 		}
 	}
@@ -421,9 +420,9 @@ func New(opts Options) AppModel {
 		MinBaseline:         cfg.Anomaly.MinBaseline,
 		CooldownSec:         cfg.Anomaly.CooldownSec,
 		MaxKeysPerDimension: cfg.Anomaly.MaxKeysPerDimension,
+		Dimensions:          cfg.Anomaly.Dimensions,
 	})
 	m.anomalyEventsCh = make(chan []anomaly.Event, 16)
-	m.anomalyDone = make(chan struct{})
 	go m.anomalyDetectorLoop()
 
 	if m.favoritePackages == nil {

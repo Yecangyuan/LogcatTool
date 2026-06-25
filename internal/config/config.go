@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/Yecangyuan/LogcatTool/internal/anomaly"
 )
 
 // Config holds user-persistent settings.
@@ -35,29 +37,19 @@ type Preset struct {
 	TimeWindowSec int    `json:"time_window_sec,omitempty"`
 }
 
-// DimensionConfig holds per-dimension overrides. Nil/zero means inherit global.
-type DimensionConfig struct {
-	Enabled           *bool    `json:"enabled,omitempty"`
-	RecentWindowSec   *int     `json:"recent_window_sec,omitempty"`
-	BaselineWindowSec *int     `json:"baseline_window_sec,omitempty"`
-	Multiplier        *float64 `json:"multiplier,omitempty"`
-	DropMultiplier    *float64 `json:"drop_multiplier,omitempty"`
-	MinBaseline       *int     `json:"min_baseline,omitempty"`
-}
-
 // AnomalyConfig is persisted user configuration for rate anomaly detection.
 type AnomalyConfig struct {
-	Enabled             bool                       `json:"enabled"`
-	RecentWindowSec     int                        `json:"recent_window_sec"`
-	BaselineWindowSec   int                        `json:"baseline_window_sec"`
-	Multiplier          float64                    `json:"multiplier"`
-	DropMultiplier      float64                    `json:"drop_multiplier"`
-	MinBaseline         int                        `json:"min_baseline"`
-	HighlightWindowSec  int                        `json:"highlight_window_sec"`
-	MaxKeysPerDimension int                        `json:"max_keys_per_dimension"`
-	CooldownSec         int                        `json:"cooldown_sec"`
-	Strategy            string                     `json:"strategy"`
-	Dimensions          map[string]DimensionConfig `json:"dimensions"`
+	Enabled             bool                               `json:"enabled"`
+	RecentWindowSec     int                                `json:"recent_window_sec"`
+	BaselineWindowSec   int                                `json:"baseline_window_sec"`
+	Multiplier          float64                            `json:"multiplier"`
+	DropMultiplier      float64                            `json:"drop_multiplier"`
+	MinBaseline         int                                `json:"min_baseline"`
+	HighlightWindowSec  int                                `json:"highlight_window_sec"`
+	MaxKeysPerDimension int                                `json:"max_keys_per_dimension"`
+	CooldownSec         int                                `json:"cooldown_sec"`
+	Strategy            string                             `json:"strategy"`
+	Dimensions          map[string]anomaly.DimensionConfig `json:"dimensions"`
 }
 
 // DefaultAnomalyConfig returns the built-in defaults.
@@ -73,7 +65,7 @@ func DefaultAnomalyConfig() AnomalyConfig {
 		MaxKeysPerDimension: 1000,
 		CooldownSec:         30,
 		Strategy:            "moving_average",
-		Dimensions: map[string]DimensionConfig{
+		Dimensions: map[string]anomaly.DimensionConfig{
 			"global":  {Enabled: boolPtr(true)},
 			"level":   {Enabled: boolPtr(true), Multiplier: floatPtr(2.0)},
 			"tag":     {Enabled: boolPtr(true)},
@@ -120,6 +112,13 @@ func Load() (Config, error) {
 }
 
 func mergeAnomalyConfig(user, def AnomalyConfig) AnomalyConfig {
+	// Merge only when user value is the zero value. For booleans and drop multiplier,
+	// zero is a valid explicit value, so we only apply defaults when the user config
+	// does not specify them at all. We detect "not specified" via an empty Dimensions map
+	// and zero numeric fields that cannot reasonably be zero in a valid config.
+	if !user.Enabled && len(user.Dimensions) == 0 {
+		user.Enabled = def.Enabled
+	}
 	if user.RecentWindowSec == 0 {
 		user.RecentWindowSec = def.RecentWindowSec
 	}
@@ -128,6 +127,9 @@ func mergeAnomalyConfig(user, def AnomalyConfig) AnomalyConfig {
 	}
 	if user.Multiplier == 0 {
 		user.Multiplier = def.Multiplier
+	}
+	if user.DropMultiplier == 0 && len(user.Dimensions) == 0 {
+		user.DropMultiplier = def.DropMultiplier
 	}
 	if user.MinBaseline == 0 {
 		user.MinBaseline = def.MinBaseline

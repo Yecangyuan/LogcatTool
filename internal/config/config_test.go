@@ -3,6 +3,8 @@ package config
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/Yecangyuan/LogcatTool/internal/anomaly"
 )
 
 func TestAnomalyConfigRoundTrip(t *testing.T) {
@@ -13,7 +15,7 @@ func TestAnomalyConfigRoundTrip(t *testing.T) {
 			BaselineWindowSec: 300,
 			Multiplier:        3.0,
 			MinBaseline:       5,
-			Dimensions: map[string]DimensionConfig{
+			Dimensions: map[string]anomaly.DimensionConfig{
 				"tag": {Enabled: boolPtr(true), Multiplier: floatPtr(2.5)},
 			},
 		},

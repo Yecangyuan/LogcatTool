@@ -1,6 +1,8 @@
 package anomaly
 
 import (
+	"fmt"
+	"os"
 	"strconv"
 	"sync"
 	"time"
@@ -18,12 +20,12 @@ type Config struct {
 	MinBaseline         int
 	CooldownSec         int
 	MaxKeysPerDimension int
+	Dimensions          map[string]DimensionConfig
 }
 
 // Detector maintains time series for multiple dimensions and evaluates them.
 type Detector struct {
 	cfg       Config
-	strategy  Strategy
 	global    *TimeSeries
 	byLevel   map[logentry.Level]*TimeSeries
 	byTag     map[string]*TimeSeries
@@ -31,7 +33,12 @@ type Detector struct {
 	byPackage map[string]*TimeSeries
 	byProcess map[string]*TimeSeries
 	cooldowns map[cooldownKey]time.Time
+	done      chan struct{}
 	mu        sync.Mutex
+
+	globalOpts MovingAverageOptions
+	dimOpts    map[Dimension]MovingAverageOptions
+	dimEnabled map[Dimension]bool
 }
 
 type cooldownKey struct {
@@ -39,21 +46,13 @@ type cooldownKey struct {
 	Key string
 }
 
-// ConfigToMovingAverageOptions converts Config to the strategy options.
-func ConfigToMovingAverageOptions(cfg Config) MovingAverageOptions {
-	return MovingAverageOptions{
-		RecentWindowSec:   cfg.RecentWindowSec,
-		BaselineWindowSec: cfg.BaselineWindowSec,
-		Multiplier:        cfg.Multiplier,
-		DropMultiplier:    cfg.DropMultiplier,
-		MinBaseline:       cfg.MinBaseline,
-	}
-}
-
 // NewDetector creates a detector from runtime config.
 func NewDetector(cfg Config) *Detector {
 	if cfg.MaxKeysPerDimension <= 0 {
 		cfg.MaxKeysPerDimension = 1000
+	}
+	if cfg.Dimensions == nil {
+		cfg.Dimensions = make(map[string]DimensionConfig)
 	}
 	total := cfg.RecentWindowSec + cfg.BaselineWindowSec
 	if total <= 0 {
@@ -63,17 +62,92 @@ func NewDetector(cfg Config) *Detector {
 	for _, lvl := range logentry.FilterableLevels {
 		byLevel[lvl] = NewTimeSeries(total)
 	}
-	return &Detector{
-		cfg:       cfg,
-		strategy:  NewMovingAverageStrategy(ConfigToMovingAverageOptions(cfg)),
-		global:    NewTimeSeries(total),
-		byLevel:   byLevel,
-		byTag:     make(map[string]*TimeSeries),
-		byPID:     make(map[int]*TimeSeries),
-		byPackage: make(map[string]*TimeSeries),
-		byProcess: make(map[string]*TimeSeries),
-		cooldowns: make(map[cooldownKey]time.Time),
+
+	d := &Detector{
+		cfg:        cfg,
+		global:     NewTimeSeries(total),
+		byLevel:    byLevel,
+		byTag:      make(map[string]*TimeSeries),
+		byPID:      make(map[int]*TimeSeries),
+		byPackage:  make(map[string]*TimeSeries),
+		byProcess:  make(map[string]*TimeSeries),
+		cooldowns:  make(map[cooldownKey]time.Time),
+		done:       make(chan struct{}),
+		globalOpts: normalizeMovingAverageOptions(MovingAverageOptions{
+			RecentWindowSec:   cfg.RecentWindowSec,
+			BaselineWindowSec: cfg.BaselineWindowSec,
+			Multiplier:        cfg.Multiplier,
+			DropMultiplier:    cfg.DropMultiplier,
+			MinBaseline:       cfg.MinBaseline,
+		}),
+		dimOpts:    make(map[Dimension]MovingAverageOptions),
+		dimEnabled: make(map[Dimension]bool),
 	}
+	d.buildDimensionConfigs()
+	return d
+}
+
+func (d *Detector) buildDimensionConfigs() {
+	for dim := DimGlobal; dim <= DimProcess; dim++ {
+		d.dimEnabled[dim] = d.cfg.Enabled
+		d.dimOpts[dim] = d.globalOpts
+	}
+
+	for name, dc := range d.cfg.Dimensions {
+		dim := parseDimension(name)
+		if dim < 0 {
+			continue
+		}
+		opts := d.globalOpts
+		if dc.Enabled != nil {
+			d.dimEnabled[dim] = *dc.Enabled
+		}
+		if dc.RecentWindowSec != nil {
+			opts.RecentWindowSec = *dc.RecentWindowSec
+		}
+		if dc.BaselineWindowSec != nil {
+			opts.BaselineWindowSec = *dc.BaselineWindowSec
+		}
+		if dc.Multiplier != nil {
+			opts.Multiplier = *dc.Multiplier
+		}
+		if dc.DropMultiplier != nil {
+			opts.DropMultiplier = *dc.DropMultiplier
+		}
+		if dc.MinBaseline != nil {
+			opts.MinBaseline = *dc.MinBaseline
+		}
+		d.dimOpts[dim] = normalizeMovingAverageOptions(opts)
+	}
+}
+
+func parseDimension(s string) Dimension {
+	switch s {
+	case "global":
+		return DimGlobal
+	case "level":
+		return DimLevel
+	case "tag":
+		return DimTag
+	case "pid":
+		return DimPID
+	case "package":
+		return DimPackage
+	case "process":
+		return DimProcess
+	default:
+		return Dimension(-1)
+	}
+}
+
+// Stop signals the background evaluation goroutine to exit.
+func (d *Detector) Stop() {
+	close(d.done)
+}
+
+// Done returns the channel used to signal detector shutdown.
+func (d *Detector) Done() <-chan struct{} {
+	return d.done
 }
 
 // Record ingests a single log entry into all enabled dimensions.
@@ -85,17 +159,25 @@ func (d *Detector) Record(e *logentry.Entry, packageName, processName string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	d.global.Add(sec, 1)
-	if s, ok := d.byLevel[e.Level]; ok {
-		s.Add(sec, 1)
+	if d.dimEnabled[DimGlobal] {
+		d.global.Add(sec, 1)
 	}
-	d.tagSeries(e.Tag, sec).Add(sec, 1)
-	d.pidSeries(e.PID, sec).Add(sec, 1)
-	if packageName != "" {
-		d.packageSeries(packageName, sec).Add(sec, 1)
+	if d.dimEnabled[DimLevel] {
+		if s, ok := d.byLevel[e.Level]; ok {
+			s.Add(sec, 1)
+		}
 	}
-	if processName != "" {
-		d.processSeries(processName, sec).Add(sec, 1)
+	if d.dimEnabled[DimTag] {
+		d.tagSeries(e.Tag).Add(sec, 1)
+	}
+	if d.dimEnabled[DimPID] {
+		d.pidSeries(e.PID).Add(sec, 1)
+	}
+	if d.dimEnabled[DimPackage] && packageName != "" {
+		d.packageSeries(packageName).Add(sec, 1)
+	}
+	if d.dimEnabled[DimProcess] && processName != "" {
+		d.processSeries(processName).Add(sec, 1)
 	}
 }
 
@@ -109,30 +191,49 @@ func (d *Detector) Evaluate(now time.Time) []Event {
 	defer d.mu.Unlock()
 
 	var all []Event
-	all = append(all, d.evalSeries(d.global, DimGlobal, "global", sec)...)
-	for lvl, s := range d.byLevel {
-		all = append(all, d.evalSeries(s, DimLevel, lvl.Label(), sec)...)
+	if d.dimEnabled[DimGlobal] {
+		all = append(all, d.evalSeries(d.global, DimGlobal, "global", sec, d.dimOpts[DimGlobal])...)
 	}
-	for k, s := range d.byTag {
-		all = append(all, d.evalSeries(s, DimTag, k, sec)...)
+	if d.dimEnabled[DimLevel] {
+		for lvl, s := range d.byLevel {
+			all = append(all, d.evalSeries(s, DimLevel, lvl.Label(), sec, d.dimOpts[DimLevel])...)
+		}
 	}
-	for k, s := range d.byPID {
-		all = append(all, d.evalSeries(s, DimPID, strconv.Itoa(k), sec)...)
+	if d.dimEnabled[DimTag] {
+		for k, s := range d.byTag {
+			all = append(all, d.evalSeries(s, DimTag, k, sec, d.dimOpts[DimTag])...)
+		}
 	}
-	for k, s := range d.byPackage {
-		all = append(all, d.evalSeries(s, DimPackage, k, sec)...)
+	if d.dimEnabled[DimPID] {
+		for k, s := range d.byPID {
+			all = append(all, d.evalSeries(s, DimPID, strconv.Itoa(k), sec, d.dimOpts[DimPID])...)
+		}
 	}
-	for k, s := range d.byProcess {
-		all = append(all, d.evalSeries(s, DimProcess, k, sec)...)
+	if d.dimEnabled[DimPackage] {
+		for k, s := range d.byPackage {
+			all = append(all, d.evalSeries(s, DimPackage, k, sec, d.dimOpts[DimPackage])...)
+		}
+	}
+	if d.dimEnabled[DimProcess] {
+		for k, s := range d.byProcess {
+			all = append(all, d.evalSeries(s, DimProcess, k, sec, d.dimOpts[DimProcess])...)
+		}
 	}
 	return d.applyCooldowns(all, now)
 }
 
-func (d *Detector) evalSeries(s *TimeSeries, dim Dimension, key string, sec int) []Event {
+func (d *Detector) evalSeries(s *TimeSeries, dim Dimension, key string, sec int, opts MovingAverageOptions) (events []Event) {
 	if s == nil {
 		return nil
 	}
-	return d.strategy.Evaluate(s, dim, key, sec)
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Fprintf(os.Stderr, "%s [anomaly panic] dimension=%s key=%s: %v\n",
+				time.Now().UTC().Format("2006-01-02T15:04:05Z"), dim.String(), key, r)
+			events = nil
+		}
+	}()
+	return NewMovingAverageStrategy(opts).Evaluate(s, dim, key, sec)
 }
 
 func (d *Detector) applyCooldowns(events []Event, now time.Time) []Event {
@@ -149,10 +250,16 @@ func (d *Detector) applyCooldowns(events []Event, now time.Time) []Event {
 		d.cooldowns[k] = now
 		out = append(out, e)
 	}
+	// Clean expired cooldown entries to prevent unbounded growth.
+	for k, last := range d.cooldowns {
+		if now.Sub(last) >= window {
+			delete(d.cooldowns, k)
+		}
+	}
 	return out
 }
 
-func (d *Detector) tagSeries(key string, sec int) *TimeSeries {
+func (d *Detector) tagSeries(key string) *TimeSeries {
 	if s, ok := d.byTag[key]; ok {
 		return s
 	}
@@ -162,7 +269,7 @@ func (d *Detector) tagSeries(key string, sec int) *TimeSeries {
 	return s
 }
 
-func (d *Detector) pidSeries(key int, sec int) *TimeSeries {
+func (d *Detector) pidSeries(key int) *TimeSeries {
 	if s, ok := d.byPID[key]; ok {
 		return s
 	}
@@ -172,7 +279,7 @@ func (d *Detector) pidSeries(key int, sec int) *TimeSeries {
 	return s
 }
 
-func (d *Detector) packageSeries(key string, sec int) *TimeSeries {
+func (d *Detector) packageSeries(key string) *TimeSeries {
 	if s, ok := d.byPackage[key]; ok {
 		return s
 	}
@@ -182,7 +289,7 @@ func (d *Detector) packageSeries(key string, sec int) *TimeSeries {
 	return s
 }
 
-func (d *Detector) processSeries(key string, sec int) *TimeSeries {
+func (d *Detector) processSeries(key string) *TimeSeries {
 	if s, ok := d.byProcess[key]; ok {
 		return s
 	}

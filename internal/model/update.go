@@ -175,8 +175,8 @@ func (m AppModel) saveAndQuit() (tea.Model, tea.Cmd) {
 	if m.source != nil {
 		m.source.Stop()
 	}
-	if m.anomalyDone != nil {
-		close(m.anomalyDone)
+	if m.anomalyDetector != nil {
+		m.anomalyDetector.Stop()
 	}
 	return m, tea.Quit
 }

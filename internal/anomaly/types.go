@@ -52,6 +52,16 @@ func (d Direction) String() string {
 	}
 }
 
+// DimensionConfig holds per-dimension overrides. Nil/zero means inherit global.
+type DimensionConfig struct {
+	Enabled           *bool    `json:"enabled,omitempty"`
+	RecentWindowSec   *int     `json:"recent_window_sec,omitempty"`
+	BaselineWindowSec *int     `json:"baseline_window_sec,omitempty"`
+	Multiplier        *float64 `json:"multiplier,omitempty"`
+	DropMultiplier    *float64 `json:"drop_multiplier,omitempty"`
+	MinBaseline       *int     `json:"min_baseline,omitempty"`
+}
+
 // Event is emitted when a dimension's rate crosses a threshold.
 type Event struct {
 	Dimension    Dimension
@@ -60,5 +70,6 @@ type Event struct {
 	RecentRate   float64
 	BaselineRate float64
 	Ratio        float64
-	TriggeredAt  time.Time
+	TriggeredAt  time.Time // wall-clock time for cooldown / flashing
+	LogTime      time.Time // log timestamp for aligning highlights
 }
