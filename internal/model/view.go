@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"image/color"
 	"strings"
+	"time"
 
+	"github.com/Yecangyuan/LogcatTool/internal/anomaly"
 	"github.com/Yecangyuan/LogcatTool/internal/logentry"
 	"github.com/Yecangyuan/LogcatTool/internal/ui"
 
@@ -58,6 +60,9 @@ func (m AppModel) View() tea.View {
 	}
 	if m.inputMode == ModeStatsPanel {
 		content = m.overlayStatsPanel(content)
+	}
+	if m.inputMode == ModeAnomalyPanel {
+		content = m.overlayAnomalyPanel(content)
 	}
 
 	v.SetContent(content)
@@ -417,6 +422,15 @@ func (m AppModel) renderStatusBar() string {
 		left += "  🚨" + truncateLabel(m.lastAlert, 20)
 	}
 
+	if m.anomaly.isFlashing(time.Now()) {
+		worst := m.anomaly.worst()
+		icon := "🔺"
+		if worst.Direction == anomaly.DirectionDrop {
+			icon = "🔻"
+		}
+		left += fmt.Sprintf("  %s %s=%s %.1fx", icon, worst.Dimension.String(), truncateLabel(worst.Key, 12), worst.Ratio)
+	}
+
 	// Sparkline
 	sparkline := m.renderSparkline()
 	if sparkline != "" {
@@ -622,6 +636,49 @@ func (m AppModel) overlayStatsPanel(bg string) string {
 
 	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter过滤 F收藏 a/Esc关闭"))
 	panel := ui.DevicePickerStyle.Render(sb.String())
+	x := (m.width - lipgloss.Width(panel)) / 2
+	y := (m.height - lipgloss.Height(panel)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	return placeOverlay(x, y, panel, bg)
+}
+
+func (m AppModel) overlayAnomalyPanel(bg string) string {
+	rows := m.anomaly.events
+	var sb strings.Builder
+	sb.WriteString(ui.HelpTitleStyle.Render("异常检测") + "\n\n")
+
+	if len(rows) == 0 {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  暂无异常"))
+	} else {
+		for i, e := range rows {
+			cursor := "  "
+			if i == m.anomaly.selection {
+				cursor = "▸ "
+			}
+			dir := "🔺"
+			style := ui.AnomalySpikeStyle
+			if e.Direction == anomaly.DirectionDrop {
+				dir = "🔻"
+				style = ui.AnomalyDropStyle
+			}
+			line := fmt.Sprintf("%s%s %s=%s  %.1fx (%.1f vs %.1f/s)",
+				cursor, dir, e.Dimension.String(), truncateLabel(e.Key, 18), e.Ratio, e.RecentRate, e.BaselineRate)
+			if i == m.anomaly.selection {
+				sb.WriteString(ui.AnomalySelectedStyle.Render(line))
+			} else {
+				sb.WriteString(style.Render(line))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter过滤 c清空 Y/Esc关闭"))
+	panel := ui.AnomalyPanelStyle.Render(sb.String())
 	x := (m.width - lipgloss.Width(panel)) / 2
 	y := (m.height - lipgloss.Height(panel)) / 2
 	if x < 0 {

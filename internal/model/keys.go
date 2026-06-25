@@ -36,6 +36,7 @@ type KeyMap struct {
 	AutoScroll   key.Binding
 	BufferSelect key.Binding
 	CopyLine     key.Binding
+	AnomalyPanel key.Binding
 	PresetPrev   key.Binding
 	PresetNext   key.Binding
 	PresetSave   key.Binding
@@ -188,6 +189,10 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("y"),
 			key.WithHelp("y", "复制当前行"),
 		),
+		AnomalyPanel: key.NewBinding(
+			key.WithKeys("Y"),
+			key.WithHelp("Y", "异常面板"),
+		),
 		PresetPrev: key.NewBinding(
 			key.WithKeys("["),
 			key.WithHelp("[", "上个预设"),
@@ -267,7 +272,8 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.LevelV, k.LevelD, k.LevelI, k.LevelW, k.LevelE, k.LevelF},
 		{k.Pause, k.Clear, k.DevicePicker, k.Export, k.ExportJSON, k.BufferSelect},
 		{k.Bookmark, k.NextBookmark, k.PrevBookmark, k.CopyLine, k.ToggleDetail},
-		{k.WrapToggle, k.Collapse, k.FoldToggle, k.AutoScroll, k.PresetPrev, k.PresetNext},
-		{k.GotoTime, k.PresetSave, k.PresetClear, k.Help, k.Quit},
+		{k.WrapToggle, k.Collapse, k.FoldToggle, k.AutoScroll, k.AnomalyPanel},
+		{k.PresetPrev, k.PresetNext, k.PresetSave, k.PresetClear, k.GotoTime, k.Help},
+		{k.Quit},
 	}
 }

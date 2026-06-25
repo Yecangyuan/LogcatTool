@@ -190,6 +190,8 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handlePkgPickerKey(msg)
 	case ModeStatsPanel:
 		return m.handleStatsPanelKey(msg)
+	case ModeAnomalyPanel:
+		return m.handleAnomalyPanelKey(msg)
 	default:
 		if isFilterInputMode(m.inputMode) {
 			return m.handleFilterInputKey(msg)
@@ -431,6 +433,15 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.CopyLine):
 		return m, m.copyCurrentLine()
+
+	case key.Matches(msg, m.keys.AnomalyPanel):
+		if m.inputMode == ModeAnomalyPanel {
+			m.inputMode = ModeNormal
+		} else {
+			m.inputMode = ModeAnomalyPanel
+			m.anomaly.selection = 0
+		}
+		return m, nil
 
 	case key.Matches(msg, m.keys.GotoTime):
 		m.inputMode = ModeGotoTime
@@ -702,6 +713,35 @@ func (m AppModel) handleStatsPanelKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		return m, cmd
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m AppModel) handleAnomalyPanelKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Cancel, m.keys.AnomalyPanel):
+		m.inputMode = ModeNormal
+		return m, nil
+	case key.Matches(msg, m.keys.Up):
+		if m.anomaly.selection > 0 {
+			m.anomaly.selection--
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Down):
+		if m.anomaly.selection < len(m.anomaly.events)-1 {
+			m.anomaly.selection++
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Confirm):
+		cmd := m.applySelectedAnomalyFilter()
+		m.inputMode = ModeNormal
+		return m, cmd
+	case msg.String() == "c":
+		m.anomaly.clear()
+		m.statusMsg = "异常历史已清空"
+		return m, nil
+	case key.Matches(msg, m.keys.Quit):
+		return m.saveAndQuit()
 	}
 	return m, nil
 }
