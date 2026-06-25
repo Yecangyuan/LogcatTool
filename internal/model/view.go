@@ -24,6 +24,10 @@ var searchHighlightStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("0")).
 	Bold(true)
 
+var anomalyHighlightStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("196")).
+	Bold(true)
+
 const detailPaneHeight = 7
 
 func (m AppModel) View() tea.View {
@@ -135,6 +139,10 @@ func (m AppModel) renderLogView() string {
 					fmt.Sprintf("  ...(%d more)", foldedCount-1),
 				)
 			}
+		}
+
+		if m.anomaly.isHighlighted(entry) {
+			line = anomalyHighlightStyle.Render("⚠ ") + line
 		}
 
 		line = rowPrefix(i == m.scrollOffset, m.bookmarks[entry.Index]) + line
