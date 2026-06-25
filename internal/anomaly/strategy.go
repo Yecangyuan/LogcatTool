@@ -50,7 +50,7 @@ func (s *movingAverageStrategy) Evaluate(series *TimeSeries, dim Dimension, key 
 	baselineCount := series.Sum(baselineFrom, baselineTo)
 	baselineRate := float64(baselineCount) / float64(s.opts.BaselineWindowSec)
 
-	if baselineRate < float64(s.opts.MinBaseline) {
+	if baselineCount < s.opts.MinBaseline {
 		return nil
 	}
 
