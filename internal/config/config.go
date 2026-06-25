@@ -16,6 +16,7 @@ type Config struct {
 	AlertKeyword      string          `json:"alert_keyword"`
 	SearchHistory     []string        `json:"search_history"`
 	Presets           [3]Preset       `json:"presets"`
+	Profiles          []Profile       `json:"profiles"`
 	CollapseDupes     bool            `json:"collapse_dupes"`
 	WrapLines         bool            `json:"wrap_lines"`
 	ShowDetails       bool            `json:"show_details"`
@@ -33,6 +34,21 @@ type Preset struct {
 	TagExclude    string `json:"tag_exclude,omitempty"`
 	PID           int    `json:"pid,omitempty"`
 	SearchText    string `json:"search_text,omitempty"`
+	CrashOnly     bool   `json:"crash_only,omitempty"`
+	TimeWindowSec int    `json:"time_window_sec,omitempty"`
+}
+
+// Profile is a named, persistent filter snapshot.
+type Profile struct {
+	Name          string `json:"name"`
+	MinLevel      string `json:"min_level,omitempty"`
+	Package       string `json:"package,omitempty"`
+	Process       string `json:"process,omitempty"`
+	Tag           string `json:"tag,omitempty"`
+	TagExclude    string `json:"tag_exclude,omitempty"`
+	PID           int    `json:"pid,omitempty"`
+	SearchText    string `json:"search_text,omitempty"`
+	IsRegex       bool   `json:"is_regex,omitempty"`
 	CrashOnly     bool   `json:"crash_only,omitempty"`
 	TimeWindowSec int    `json:"time_window_sec,omitempty"`
 }

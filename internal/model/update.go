@@ -1,7 +1,6 @@
 package model
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -125,7 +124,7 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.deviceIdx = 0
 
 	case PackagePIDMsg:
-		m.filter.PIDsByPkg = map[string][]int(msg)
+		m.filter.SetPIDsByPkg(map[string][]int(msg))
 		m.rebuildPIDLookups()
 		if m.filter.Package != "" || m.filter.Process != "" {
 			m.refilter()
@@ -181,6 +180,33 @@ func (m AppModel) saveAndQuit() (tea.Model, tea.Cmd) {
 	return m, tea.Quit
 }
 
+func (m AppModel) replayController() source.ReplayController {
+	ctrl, ok := m.source.(source.ReplayController)
+	if !ok {
+		return nil
+	}
+	return ctrl
+}
+
+func (m AppModel) adjustReplaySpeed(factor float64) AppModel {
+	ctrl := m.replayController()
+	if ctrl == nil {
+		m.statusMsg = "仅回放模式支持调整速度"
+		return m
+	}
+	next := ctrl.Speed() * factor
+	if next < 0.25 {
+		next = 0.25
+	}
+	if next > 64 {
+		next = 64
+	}
+	ctrl.SetSpeed(next)
+	m.replaySpeed = next
+	m.statusMsg = fmt.Sprintf("回放速度: %.2gx", next)
+	return m
+}
+
 func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Input mode handling
 	switch m.inputMode {
@@ -192,6 +218,12 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleStatsPanelKey(msg)
 	case ModeAnomalyPanel:
 		return m.handleAnomalyPanelKey(msg)
+	case ModeExportPanel:
+		return m.handleExportPanelKey(msg)
+	case ModeProfilePanel:
+		return m.handleProfilePanelKey(msg)
+	case ModeProfileName:
+		return m.handleProfileNameKey(msg)
 	default:
 		if isFilterInputMode(m.inputMode) {
 			return m.handleFilterInputKey(msg)
@@ -210,8 +242,14 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Pause):
 		m.paused = !m.paused
 		if m.paused {
+			if ctrl := m.replayController(); ctrl != nil {
+				ctrl.Pause()
+			}
 			m.statusMsg = "⏸ 已暂停"
 		} else {
+			if ctrl := m.replayController(); ctrl != nil {
+				ctrl.Resume()
+			}
 			buffered := len(m.pausedBuffer)
 			if buffered > 0 {
 				m.ingestEntries(m.pausedBuffer)
@@ -336,6 +374,16 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.Bookmark):
 		return m.toggleBookmark(), nil
 
+	case key.Matches(msg, m.keys.ExportPanel):
+		m.inputMode = ModeExportPanel
+		m.exportSelection = 0
+		return m, nil
+
+	case key.Matches(msg, m.keys.ProfilePanel):
+		m.inputMode = ModeProfilePanel
+		m.profileSelection = 0
+		return m, nil
+
 	case key.Matches(msg, m.keys.Favorite):
 		m.toggleCurrentFavorite()
 		return m, nil
@@ -453,6 +501,12 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, m.keys.FoldToggle):
 		m.toggleCrashFold()
 		return m, nil
+
+	case key.Matches(msg, m.keys.ReplayFaster):
+		return m.adjustReplaySpeed(2), nil
+
+	case key.Matches(msg, m.keys.ReplaySlower):
+		return m.adjustReplaySpeed(0.5), nil
 
 	case key.Matches(msg, m.keys.ExportJSON):
 		if len(m.filtered) > 0 {
@@ -736,6 +790,14 @@ func (m AppModel) handleAnomalyPanelKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		cmd := m.applySelectedAnomalyFilter()
 		m.inputMode = ModeNormal
 		return m, cmd
+	case key.Matches(msg, m.keys.ExportJSON):
+		ctx, ok := m.selectedAnomalyContext()
+		if !ok || len(ctx.Entries) == 0 {
+			m.statusMsg = "没有异常上下文可导出"
+			return m, nil
+		}
+		m.inputMode = ModeNormal
+		return m, m.exportSelectedAnomalyContextCmd()
 	case msg.String() == "c":
 		m.anomaly.clear()
 		m.statusMsg = "异常历史已清空"
@@ -744,6 +806,125 @@ func (m AppModel) handleAnomalyPanelKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		return m.saveAndQuit()
 	}
 	return m, nil
+}
+
+func (m AppModel) handleExportPanelKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	options := exportOptions()
+	if m.exportSelection >= len(options) && len(options) > 0 {
+		m.exportSelection = len(options) - 1
+	}
+	switch {
+	case key.Matches(msg, m.keys.Cancel, m.keys.ExportPanel):
+		m.inputMode = ModeNormal
+		return m, nil
+	case key.Matches(msg, m.keys.Up):
+		if m.exportSelection > 0 {
+			m.exportSelection--
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Down):
+		if m.exportSelection < len(options)-1 {
+			m.exportSelection++
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Confirm):
+		if len(options) == 0 {
+			m.inputMode = ModeNormal
+			return m, nil
+		}
+		option := options[m.exportSelection]
+		entries := m.entriesForExportScope(option.Scope)
+		if len(entries) == 0 {
+			m.statusMsg = "没有日志可导出"
+			m.inputMode = ModeNormal
+			return m, nil
+		}
+		m.inputMode = ModeNormal
+		return m, m.exportScopedLogsCmd(option.Scope, option.Format)
+	case key.Matches(msg, m.keys.Quit):
+		return m.saveAndQuit()
+	}
+	return m, nil
+}
+
+func (m AppModel) handleProfilePanelKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.profileSelection >= len(m.cfg.Profiles) && len(m.cfg.Profiles) > 0 {
+		m.profileSelection = len(m.cfg.Profiles) - 1
+	}
+	switch {
+	case key.Matches(msg, m.keys.Cancel, m.keys.ProfilePanel):
+		m.inputMode = ModeNormal
+		return m, nil
+	case key.Matches(msg, m.keys.Up):
+		if m.profileSelection > 0 {
+			m.profileSelection--
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Down):
+		if m.profileSelection < len(m.cfg.Profiles)-1 {
+			m.profileSelection++
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Confirm):
+		cmd := m.applySelectedProfileCmd()
+		m.inputMode = ModeNormal
+		return m, cmd
+	case msg.String() == "s":
+		m.profileNameMode = profileNameSave
+		m.inputMode = ModeProfileName
+		m.filterInput.Placeholder = "配置名称..."
+		m.filterInput.SetValue("")
+		m.filterInput.Focus()
+		return m, nil
+	case msg.String() == "r":
+		if len(m.cfg.Profiles) == 0 {
+			m.statusMsg = "没有可重命名的配置"
+			return m, nil
+		}
+		m.profileNameMode = profileNameRename
+		m.inputMode = ModeProfileName
+		m.filterInput.Placeholder = "新的配置名称..."
+		m.filterInput.SetValue(m.cfg.Profiles[m.profileSelection].Name)
+		m.filterInput.Focus()
+		return m, nil
+	case msg.String() == "d":
+		if len(m.cfg.Profiles) == 0 {
+			m.statusMsg = "没有可删除的配置"
+			return m, nil
+		}
+		m.deleteProfile(m.profileSelection)
+		if m.profileSelection >= len(m.cfg.Profiles) && m.profileSelection > 0 {
+			m.profileSelection--
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Quit):
+		return m.saveAndQuit()
+	}
+	return m, nil
+}
+
+func (m AppModel) handleProfileNameKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case key.Matches(msg, m.keys.Cancel):
+		m.inputMode = ModeProfilePanel
+		m.filterInput.Blur()
+		return m, nil
+	case key.Matches(msg, m.keys.Confirm):
+		name := m.filterInput.Value()
+		switch m.profileNameMode {
+		case profileNameRename:
+			m.renameProfile(m.profileSelection, name)
+		default:
+			m.saveProfile(name)
+			m.profileSelection = len(m.cfg.Profiles) - 1
+		}
+		m.inputMode = ModeProfilePanel
+		m.filterInput.Blur()
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.filterInput, cmd = m.filterInput.Update(normalizeTextInputKey(msg))
+	return m, cmd
 }
 
 func (m *AppModel) filterPackageList() {
@@ -904,6 +1085,10 @@ func (m *AppModel) ingestEntries(entries []*logentry.Entry) {
 	if len(entries) == 0 {
 		return
 	}
+	if m.filter.TimeWindow > 0 {
+		m.ingestEntriesIncrementalTimeWindow(entries)
+		return
+	}
 	latest := entries[len(entries)-1].Timestamp
 	for _, entry := range entries {
 		entry.Index = m.totalCount
@@ -918,10 +1103,6 @@ func (m *AppModel) ingestEntries(entries []*logentry.Entry) {
 	m.updateSparkline(len(entries))
 	m.pruneStaleBookmarks()
 	m.filter.ReferenceTime = latest
-	if m.filter.TimeWindow > 0 {
-		m.refilter()
-		return
-	}
 	for _, entry := range entries {
 		if m.filter.Match(entry) {
 			m.filtered = append(m.filtered, entry)
@@ -938,6 +1119,58 @@ func (m *AppModel) ingestEntries(entries []*logentry.Entry) {
 	if m.autoScroll {
 		m.scrollToBottom()
 	}
+}
+
+func (m *AppModel) ingestEntriesIncrementalTimeWindow(entries []*logentry.Entry) {
+	if len(entries) == 0 {
+		return
+	}
+	latest := entries[len(entries)-1].Timestamp
+	for _, entry := range entries {
+		entry.Index = m.totalCount
+		m.totalCount++
+		m.preRenderEntry(entry)
+		m.allEntries.Push(entry)
+		m.maybeTriggerAlert(entry)
+		pkg := m.packageByPID[entry.PID]
+		proc := m.processByPID[entry.PID]
+		m.anomalyDetector.Record(entry, pkg, proc)
+	}
+	m.updateSparkline(len(entries))
+	m.pruneStaleBookmarks()
+	m.filter.ReferenceTime = latest
+
+	cutoff := latest.Add(-m.filter.TimeWindow)
+	oldestIndex := m.totalCount - m.allEntries.Len()
+	if oldestIndex < 0 {
+		oldestIndex = 0
+	}
+	kept := 0
+	for _, entry := range m.filtered {
+		if entry.Index < oldestIndex || entry.Timestamp.Before(cutoff) {
+			continue
+		}
+		m.filtered[kept] = entry
+		kept++
+	}
+	for i := kept; i < len(m.filtered); i++ {
+		m.filtered[i] = nil
+	}
+	m.filtered = m.filtered[:kept]
+
+	for _, entry := range entries {
+		if m.filter.Match(entry) {
+			m.filtered = append(m.filtered, entry)
+		}
+	}
+	m.filteredCount = len(m.filtered)
+	m.rebuildDisplayRows()
+	m.invalidateStats()
+	m.refreshStatsIfVisible()
+	if m.autoScroll {
+		m.scrollToBottom()
+	}
+	m.clampScroll()
 }
 
 func (m *AppModel) rebuildDisplayRows() {
@@ -1630,34 +1863,12 @@ func isStackFrame(msg string) bool {
 func exportJSONCmd(entries []*logentry.Entry) tea.Cmd {
 	return func() tea.Msg {
 		filename := fmt.Sprintf("logcat_%s.json", time.Now().Format("20060102_150405"))
-		type jsonEntry struct {
-			Timestamp string `json:"timestamp"`
-			PID       int    `json:"pid"`
-			TID       int    `json:"tid"`
-			Level     string `json:"level"`
-			Tag       string `json:"tag"`
-			Message   string `json:"message"`
-			Raw       string `json:"raw"`
-			IsCrash   bool   `json:"is_crash"`
-		}
-		var out []jsonEntry
-		for _, e := range entries {
-			out = append(out, jsonEntry{
-				Timestamp: e.Timestamp.Format("2006-01-02T15:04:05.000Z07:00"),
-				PID:       e.PID,
-				TID:       e.TID,
-				Level:     e.Level.Char(),
-				Tag:       e.Tag,
-				Message:   e.Message,
-				Raw:       e.Raw,
-				IsCrash:   e.IsCrash,
-			})
-		}
-		data, err := json.MarshalIndent(out, "", "  ")
+		f, err := os.Create(filename)
 		if err != nil {
-			return LogErrorMsg{Err: fmt.Errorf("导出JSON失败: %w", err)}
+			return LogErrorMsg{Err: fmt.Errorf("写入JSON失败: %w", err)}
 		}
-		if err := os.WriteFile(filename, data, 0644); err != nil {
+		defer f.Close()
+		if err := writeJSONLogs(f, entries); err != nil {
 			return LogErrorMsg{Err: fmt.Errorf("写入JSON失败: %w", err)}
 		}
 		return ExportDoneMsg{Path: filename}

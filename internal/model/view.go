@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var crashStyle = lipgloss.NewStyle().
@@ -68,6 +69,12 @@ func (m AppModel) View() tea.View {
 	}
 	if m.inputMode == ModeAnomalyPanel {
 		content = m.overlayAnomalyPanel(content)
+	}
+	if m.inputMode == ModeExportPanel {
+		content = m.overlayExportPanel(content)
+	}
+	if m.inputMode == ModeProfilePanel {
+		content = m.overlayProfilePanel(content)
 	}
 
 	v.SetContent(content)
@@ -483,10 +490,13 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    1-6         选择最低日志级别 V/D/I/W/E/F\n")
 	sb.WriteString("\n  操作:\n")
 	sb.WriteString("    Space       暂停/恢复日志流\n")
+	sb.WriteString("    + / -       回放模式加速/减速\n")
 	sb.WriteString("    c           清除日志 (同时清除设备缓冲区)\n")
 	sb.WriteString("    d           选择设备\n")
 	sb.WriteString("    e           导出日志 (文本)\n")
 	sb.WriteString("    Ctrl+e      导出日志 (JSON)\n")
+	sb.WriteString("    O           打开导出面板\n")
+	sb.WriteString("    U           打开配置面板\n")
 	sb.WriteString("    b           添加/移除书签\n")
 	sb.WriteString("    n/N         下一个/上一个书签\n")
 	sb.WriteString("    y           复制当前行到剪贴板\n")
@@ -685,10 +695,92 @@ func (m AppModel) overlayAnomalyPanel(bg string) string {
 			}
 			sb.WriteString("\n")
 		}
+		if ctx, ok := m.selectedAnomalyContext(); ok {
+			sb.WriteString("\n")
+			sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("214")).Bold(true).Render("上下文"))
+			sb.WriteString("\n")
+			for _, line := range anomalyContextSummaryLines(ctx) {
+				sb.WriteString(line)
+				sb.WriteString("\n")
+			}
+		}
 	}
 
-	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter过滤 c清空 Y/Esc关闭"))
+	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter过滤 Ctrl+e导出上下文 c清空 Y/Esc关闭"))
 	panel := ui.AnomalyPanelStyle.Render(sb.String())
+	x := (m.width - lipgloss.Width(panel)) / 2
+	y := (m.height - lipgloss.Height(panel)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	return placeOverlay(x, y, panel, bg)
+}
+
+func (m AppModel) overlayExportPanel(bg string) string {
+	options := exportOptions()
+	var sb strings.Builder
+	sb.WriteString(ui.HelpTitleStyle.Render("导出") + "\n\n")
+
+	if len(options) == 0 {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  暂无导出选项"))
+	} else {
+		for i, option := range options {
+			cursor := "  "
+			if i == m.exportSelection {
+				cursor = "▸ "
+			}
+			count := len(m.entriesForExportScope(option.Scope))
+			line := fmt.Sprintf("%s%-18s %-10s %5d", cursor, option.Scope.Label(), option.Format.Label(), count)
+			if i == m.exportSelection {
+				sb.WriteString(ui.DeviceSelectedStyle.Render(line))
+			} else {
+				sb.WriteString(ui.DeviceNormalStyle.Render(line))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter导出 O/Esc关闭"))
+	panel := ui.DevicePickerStyle.Render(sb.String())
+	x := (m.width - lipgloss.Width(panel)) / 2
+	y := (m.height - lipgloss.Height(panel)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	return placeOverlay(x, y, panel, bg)
+}
+
+func (m AppModel) overlayProfilePanel(bg string) string {
+	var sb strings.Builder
+	sb.WriteString(ui.HelpTitleStyle.Render("过滤配置") + "\n\n")
+
+	if len(m.cfg.Profiles) == 0 {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  暂无配置，按 s 保存当前过滤"))
+	} else {
+		for i, profile := range m.cfg.Profiles {
+			cursor := "  "
+			if i == m.profileSelection {
+				cursor = "▸ "
+			}
+			summary := m.presetSummary(snapshotFromProfile(profile))
+			line := fmt.Sprintf("%s%-18s %s", cursor, truncateLabel(profile.Name, 18), truncateLabel(summary, 44))
+			if i == m.profileSelection {
+				sb.WriteString(ui.DeviceSelectedStyle.Render(line))
+			} else {
+				sb.WriteString(ui.DeviceNormalStyle.Render(line))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter应用 s保存 r重命名 d删除 U/Esc关闭"))
+	panel := ui.DevicePickerStyle.Render(sb.String())
 	x := (m.width - lipgloss.Width(panel)) / 2
 	y := (m.height - lipgloss.Height(panel)) / 2
 	if x < 0 {
@@ -703,6 +795,9 @@ func (m AppModel) overlayAnomalyPanel(bg string) string {
 func placeOverlay(x, y int, overlay, bg string) string {
 	bgLines := strings.Split(bg, "\n")
 	overlayLines := strings.Split(overlay, "\n")
+	for len(bgLines) < y+len(overlayLines) {
+		bgLines = append(bgLines, "")
+	}
 
 	for i, line := range overlayLines {
 		row := y + i
@@ -729,19 +824,17 @@ func placeOverlay(x, y int, overlay, bg string) string {
 }
 
 func truncateToWidth(s string, w int) string {
-	runes := []rune(s)
-	if w >= len(runes) {
+	if ansi.StringWidth(s) <= w {
 		return s
 	}
-	return string(runes[:w])
+	return ansi.Truncate(s, w, "")
 }
 
 func skipToWidth(s string, w int) string {
-	runes := []rune(s)
-	if w >= len(runes) {
+	if ansi.StringWidth(s) <= w {
 		return ""
 	}
-	return string(runes[w:])
+	return ansi.Cut(s, w, ansi.StringWidth(s))
 }
 
 func wrapText(s string, width, maxLines int) []string {
@@ -836,6 +929,8 @@ func filterModeLabel(mode InputMode) string {
 		return "进程"
 	case ModeAlertKeyword:
 		return "告警"
+	case ModeProfileName:
+		return "配置名称"
 	case ModePidFilter:
 		return "PID"
 	default:

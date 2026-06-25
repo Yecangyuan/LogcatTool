@@ -3,7 +3,6 @@ package model
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/Yecangyuan/LogcatTool/internal/adb"
@@ -36,11 +35,14 @@ const (
 	ModePkgPicker
 	ModeGotoTime
 	ModeAnomalyPanel
+	ModeExportPanel
+	ModeProfilePanel
+	ModeProfileName
 )
 
 func isFilterInputMode(mode InputMode) bool {
 	switch mode {
-	case ModeSearch, ModeTagFilter, ModeTagExcludeFilter, ModePkgFilter, ModePidFilter, ModeProcessFilter, ModeAlertKeyword:
+	case ModeSearch, ModeTagFilter, ModeTagExcludeFilter, ModePkgFilter, ModePidFilter, ModeProcessFilter, ModeAlertKeyword, ModeProfileName:
 		return true
 	default:
 		return false
@@ -157,6 +159,8 @@ type AppModel struct {
 
 	filePath     string // non-empty when reading from file
 	presetSerial string // preset device serial from CLI
+	replayMode   bool
+	replaySpeed  float64
 
 	// Package picker state
 	allPackages      []string
@@ -164,6 +168,9 @@ type AppModel struct {
 	pkgPickerIdx     int
 	pkgPickerSearch  string
 	statsSelection   int
+	exportSelection  int
+	profileSelection int
+	profileNameMode  profileNameMode
 
 	// Logcat buffer selection
 	logBuffer LogcatBuffer
@@ -294,12 +301,12 @@ func startSourceCmd(src source.LogSource) tea.Cmd {
 func exportLogsCmd(entries []*logentry.Entry) tea.Cmd {
 	return func() tea.Msg {
 		filename := fmt.Sprintf("logcat_%s.txt", time.Now().Format("20060102_150405"))
-		var sb strings.Builder
-		for _, e := range entries {
-			sb.WriteString(e.Raw)
-			sb.WriteByte('\n')
+		f, err := os.Create(filename)
+		if err != nil {
+			return LogErrorMsg{Err: fmt.Errorf("导出失败: %w", err)}
 		}
-		if err := os.WriteFile(filename, []byte(sb.String()), 0644); err != nil {
+		defer f.Close()
+		if err := writeTextLogs(f, entries); err != nil {
 			return LogErrorMsg{Err: fmt.Errorf("导出失败: %w", err)}
 		}
 		return ExportDoneMsg{Path: filename}
@@ -367,15 +374,20 @@ func (m *AppModel) anomalyDetectorLoop() {
 // --- Constructor ---
 
 type Options struct {
-	ADBPath    string
-	FilePath   string
-	Serial     string
-	BufferSize int
+	ADBPath     string
+	FilePath    string
+	Serial      string
+	BufferSize  int
+	ReplayMode  bool
+	ReplaySpeed float64
 }
 
 func New(opts Options) AppModel {
 	if opts.BufferSize <= 0 {
 		opts.BufferSize = defaultBufferSize
+	}
+	if opts.ReplaySpeed <= 0 {
+		opts.ReplaySpeed = 1
 	}
 
 	ti := textinput.New()
@@ -399,6 +411,8 @@ func New(opts Options) AppModel {
 		bookmarks:         make(map[int]bool),
 		filePath:          opts.FilePath,
 		presetSerial:      opts.Serial,
+		replayMode:        opts.ReplayMode,
+		replaySpeed:       opts.ReplaySpeed,
 		logBuffer:         BufferAll,
 		favoritePackages:  cfg.FavoritePackages,
 		favoriteProcesses: cfg.FavoriteProcesses,
@@ -458,7 +472,12 @@ func New(opts Options) AppModel {
 func (m AppModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{sparklineTickCmd(), waitForAnomalyEvents(m.anomalyEventsCh)}
 	if m.filePath != "" {
-		src := source.NewFileSource(m.filePath)
+		var src source.LogSource
+		if m.replayMode {
+			src = source.NewReplaySource(m.filePath, m.replaySpeed)
+		} else {
+			src = source.NewFileSource(m.filePath)
+		}
 		cmds = append(cmds, startSourceCmd(src))
 	} else {
 		cmds = append(cmds, listDevicesCmd(m.adbPath))

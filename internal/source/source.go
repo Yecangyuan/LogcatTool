@@ -8,3 +8,10 @@ type LogSource interface {
 	IsRunning() bool
 	Name() string
 }
+
+type ReplayController interface {
+	Pause()
+	Resume()
+	SetSpeed(speed float64)
+	Speed() float64
+}

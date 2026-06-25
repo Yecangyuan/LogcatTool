@@ -6,11 +6,19 @@ logcatool-debug.log
 # Project infrastructure and tooling
 .claude/
 .codex/
-.cursor/
+.cursor/*
+!.cursor/
+!.cursor/commands/
+.cursor/commands/*
+!.cursor/commands/opsx-verify.md
 AGENTS.md
 CLAUDE.md
 HARNESS.md
-harness/
+harness/*
+!harness/
+!harness/bin/
+harness/bin/*
+!harness/bin/verify
 openspec/
 docs/
 

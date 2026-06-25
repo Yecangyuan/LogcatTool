@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT_DIR/lib/common.sh"
+
+print_section() {
+  printf '\n== %s ==\n' "$1"
+}
+
+repo_root="$(harness_repo_root)"
+
+printf 'HARNESS VERIFY\n'
+printf 'Repo Root: %s\n' "$repo_root"
+
+print_section "Preflight"
+bash "$ROOT_DIR/bin/check"
+
+print_section "Harness Tests"
+if [[ "${HARNESS_VERIFY_SKIP_TESTS:-}" == "1" ]]; then
+  printf 'Skipped by HARNESS_VERIFY_SKIP_TESTS=1\n'
+else
+  bash "$ROOT_DIR/tests/test_harness.sh"
+fi
+
+print_section "OpenSpec Complete Changes"
+if harness_has_cmd openspec; then
+  mapfile -t complete_changes < <(harness_collect_complete_change_names)
+
+  if [[ "${#complete_changes[@]}" -eq 0 ]]; then
+    printf 'No complete active changes to validate.\n'
+  else
+    for change_name in "${complete_changes[@]}"; do
+      printf 'Validating complete change: %s\n' "$change_name"
+      openspec validate "$change_name" --json
+    done
+  fi
+else
+  harness_print_err "openspec unavailable; cannot validate changes"
+  exit 1
+fi
+
+print_section "OpenSpec Specs"
+openspec validate --specs --json

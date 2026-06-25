@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Filter struct {
@@ -21,6 +22,12 @@ type Filter struct {
 	IsRegex       bool
 	PIDsByPkg     map[string][]int // package/process name -> PIDs mapping
 	Levels        map[Level]bool   // deprecated: kept for compatibility, unused
+
+	pidIndexesEnabled bool
+	packagePIDFilter  string
+	packagePIDSet     map[int]struct{}
+	processPIDFilter  string
+	processPIDSet     map[int]struct{}
 }
 
 type Snapshot struct {
@@ -94,6 +101,13 @@ func (f *Filter) matchPackage(pid int) bool {
 	if len(f.PIDsByPkg) == 0 || f.Package == "" {
 		return true
 	}
+	if f.pidIndexesEnabled {
+		if f.packagePIDSet == nil || f.packagePIDFilter != f.Package {
+			f.rebuildPackagePIDSet()
+		}
+		_, ok := f.packagePIDSet[pid]
+		return ok
+	}
 	for name, pids := range f.PIDsByPkg {
 		if name != f.Package && !strings.HasPrefix(name, f.Package+":") {
 			continue
@@ -111,6 +125,13 @@ func (f *Filter) matchProcess(pid int) bool {
 	if len(f.PIDsByPkg) == 0 || f.Process == "" {
 		return true
 	}
+	if f.pidIndexesEnabled {
+		if f.processPIDSet == nil || f.processPIDFilter != f.Process {
+			f.rebuildProcessPIDSet()
+		}
+		_, ok := f.processPIDSet[pid]
+		return ok
+	}
 	for name, pids := range f.PIDsByPkg {
 		if !containsFold(name, f.Process) {
 			continue
@@ -122,6 +143,43 @@ func (f *Filter) matchProcess(pid int) bool {
 		}
 	}
 	return false
+}
+
+func (f *Filter) SetPIDsByPkg(pids map[string][]int) {
+	f.PIDsByPkg = pids
+	f.pidIndexesEnabled = true
+	f.packagePIDFilter = ""
+	f.packagePIDSet = nil
+	f.processPIDFilter = ""
+	f.processPIDSet = nil
+}
+
+func (f *Filter) rebuildPackagePIDSet() {
+	set := make(map[int]struct{})
+	for name, pids := range f.PIDsByPkg {
+		if name != f.Package && !strings.HasPrefix(name, f.Package+":") {
+			continue
+		}
+		for _, pid := range pids {
+			set[pid] = struct{}{}
+		}
+	}
+	f.packagePIDFilter = f.Package
+	f.packagePIDSet = set
+}
+
+func (f *Filter) rebuildProcessPIDSet() {
+	set := make(map[int]struct{})
+	for name, pids := range f.PIDsByPkg {
+		if !containsFold(name, f.Process) {
+			continue
+		}
+		for _, pid := range pids {
+			set[pid] = struct{}{}
+		}
+	}
+	f.processPIDFilter = f.Process
+	f.processPIDSet = set
 }
 
 func (f *Filter) matchSearch(e *Entry) bool {
@@ -188,7 +246,52 @@ func (f *Filter) IsActive() bool {
 }
 
 func containsFold(s, substr string) bool {
+	if substr == "" {
+		return true
+	}
+	if isASCIIString(s) && isASCIIString(substr) {
+		return containsFoldASCII(s, substr)
+	}
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
+}
+
+func containsFoldASCII(s, substr string) bool {
+	if len(substr) > len(s) {
+		return false
+	}
+	first := asciiLower(substr[0])
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if asciiLower(s[i]) != first {
+			continue
+		}
+		matched := true
+		for j := 1; j < len(substr); j++ {
+			if asciiLower(s[i+j]) != asciiLower(substr[j]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func isASCIIString(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+	return true
+}
+
+func asciiLower(c byte) byte {
+	if c >= 'A' && c <= 'Z' {
+		return c + ('a' - 'A')
+	}
+	return c
 }
 
 // ApplyAll filters a slice of entries, returning only matching ones.

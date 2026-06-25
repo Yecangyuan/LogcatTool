@@ -27,6 +27,8 @@ type KeyMap struct {
 	Clear        key.Binding
 	DevicePicker key.Binding
 	Export       key.Binding
+	ExportPanel  key.Binding
+	ProfilePanel key.Binding
 	Bookmark     key.Binding
 	NextBookmark key.Binding
 	PrevBookmark key.Binding
@@ -53,6 +55,8 @@ type KeyMap struct {
 	GotoTime     key.Binding
 	FoldToggle   key.Binding
 	ExportJSON   key.Binding
+	ReplayFaster key.Binding
+	ReplaySlower key.Binding
 }
 
 func DefaultKeyMap() KeyMap {
@@ -152,6 +156,14 @@ func DefaultKeyMap() KeyMap {
 		Export: key.NewBinding(
 			key.WithKeys("e"),
 			key.WithHelp("e", "导出日志"),
+		),
+		ExportPanel: key.NewBinding(
+			key.WithKeys("O"),
+			key.WithHelp("O", "导出面板"),
+		),
+		ProfilePanel: key.NewBinding(
+			key.WithKeys("U"),
+			key.WithHelp("U", "配置面板"),
 		),
 		Bookmark: key.NewBinding(
 			key.WithKeys("b"),
@@ -257,6 +269,14 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("ctrl+e"),
 			key.WithHelp("Ctrl+e", "导出JSON"),
 		),
+		ReplayFaster: key.NewBinding(
+			key.WithKeys("+", "="),
+			key.WithHelp("+", "回放加速"),
+		),
+		ReplaySlower: key.NewBinding(
+			key.WithKeys("-"),
+			key.WithHelp("-", "回放减速"),
+		),
 	}
 }
 
@@ -270,10 +290,11 @@ func (k KeyMap) FullHelp() [][]key.Binding {
 		{k.Search, k.TagFilter, k.TagExclude, k.PkgFilter, k.ProcFilter, k.PidFilter},
 		{k.CrashMode, k.TimeRange, k.StatsPanel, k.Favorite, k.AlertKeyword},
 		{k.LevelV, k.LevelD, k.LevelI, k.LevelW, k.LevelE, k.LevelF},
-		{k.Pause, k.Clear, k.DevicePicker, k.Export, k.ExportJSON, k.BufferSelect},
+		{k.Pause, k.Clear, k.DevicePicker, k.Export, k.ExportJSON, k.ExportPanel},
 		{k.Bookmark, k.NextBookmark, k.PrevBookmark, k.CopyLine, k.ToggleDetail},
-		{k.WrapToggle, k.Collapse, k.FoldToggle, k.AutoScroll, k.AnomalyPanel},
-		{k.PresetPrev, k.PresetNext, k.PresetSave, k.PresetClear, k.GotoTime, k.Help},
+		{k.WrapToggle, k.Collapse, k.FoldToggle, k.AutoScroll, k.AnomalyPanel, k.ProfilePanel},
+		{k.PresetPrev, k.PresetNext, k.PresetSave, k.PresetClear, k.GotoTime, k.ReplayFaster},
+		{k.ReplaySlower, k.Help},
 		{k.Quit},
 	}
 }

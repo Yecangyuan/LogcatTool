@@ -164,3 +164,60 @@ func TestLoadSaveRoundTrip(t *testing.T) {
 		t.Fatalf("level multiplier want 2.0 got %v", level.Multiplier)
 	}
 }
+
+func TestFilterProfilesRoundTrip(t *testing.T) {
+	cfg := Config{
+		Profiles: []Profile{
+			{
+				Name:          "network errors",
+				MinLevel:      "E",
+				Package:       "com.example.app",
+				Process:       "com.example.app:remote",
+				Tag:           "Network",
+				TagExclude:    "Noise",
+				PID:           1234,
+				SearchText:    "timeout",
+				CrashOnly:     true,
+				TimeWindowSec: 60,
+			},
+		},
+		Anomaly: DefaultAnomalyConfig(),
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded Config
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(decoded.Profiles) != 1 {
+		t.Fatalf("profile count = %d, want 1", len(decoded.Profiles))
+	}
+	profile := decoded.Profiles[0]
+	if profile.Name != "network errors" || profile.SearchText != "timeout" || !profile.CrashOnly || profile.TimeWindowSec != 60 {
+		t.Fatalf("decoded profile mismatch: %#v", profile)
+	}
+}
+
+func TestOldPresetOnlyConfigLeavesProfilesEmpty(t *testing.T) {
+	data := []byte(`{
+		"presets": [
+			{"used": true, "min_level": "W", "tag": "ActivityManager"},
+			{},
+			{}
+		],
+		"anomaly": {"enabled": true}
+	}`)
+	var decoded Config
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(decoded.Profiles) != 0 {
+		t.Fatalf("old config profile count = %d, want 0", len(decoded.Profiles))
+	}
+	if !decoded.Presets[0].Used || decoded.Presets[0].Tag != "ActivityManager" {
+		t.Fatalf("preset not preserved: %#v", decoded.Presets[0])
+	}
+}
