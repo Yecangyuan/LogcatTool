@@ -107,15 +107,47 @@ func Load() (Config, error) {
 	data, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return Config{}, nil
+			return Config{Anomaly: DefaultAnomalyConfig()}, nil
 		}
-		return Config{}, fmt.Errorf("read config: %w", err)
+		return Config{Anomaly: DefaultAnomalyConfig()}, fmt.Errorf("read config: %w", err)
 	}
 	var c Config
 	if err := json.Unmarshal(data, &c); err != nil {
-		return Config{}, fmt.Errorf("parse config: %w", err)
+		return Config{Anomaly: DefaultAnomalyConfig()}, fmt.Errorf("parse config: %w", err)
 	}
+	c.Anomaly = mergeAnomalyConfig(c.Anomaly, DefaultAnomalyConfig())
 	return c, nil
+}
+
+func mergeAnomalyConfig(user, def AnomalyConfig) AnomalyConfig {
+	if user.RecentWindowSec == 0 {
+		user.RecentWindowSec = def.RecentWindowSec
+	}
+	if user.BaselineWindowSec == 0 {
+		user.BaselineWindowSec = def.BaselineWindowSec
+	}
+	if user.Multiplier == 0 {
+		user.Multiplier = def.Multiplier
+	}
+	if user.MinBaseline == 0 {
+		user.MinBaseline = def.MinBaseline
+	}
+	if user.HighlightWindowSec == 0 {
+		user.HighlightWindowSec = def.HighlightWindowSec
+	}
+	if user.MaxKeysPerDimension == 0 {
+		user.MaxKeysPerDimension = def.MaxKeysPerDimension
+	}
+	if user.CooldownSec == 0 {
+		user.CooldownSec = def.CooldownSec
+	}
+	if user.Strategy == "" {
+		user.Strategy = def.Strategy
+	}
+	if user.Dimensions == nil {
+		user.Dimensions = def.Dimensions
+	}
+	return user
 }
 
 // Save writes the config to disk, creating directories if needed.
