@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Yecangyuan/LogcatTool/internal/adb"
+	"github.com/Yecangyuan/LogcatTool/internal/anomaly"
 	"github.com/Yecangyuan/LogcatTool/internal/logentry"
 	"github.com/Yecangyuan/LogcatTool/internal/source"
 
@@ -84,6 +85,18 @@ func (m AppModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SparklineTickMsg:
 		m.rotateSparkline()
 		cmds = append(cmds, sparklineTickCmd())
+
+	case AnomalyEventsMsg:
+		m.anomaly.applyEvents([]anomaly.Event(msg), m.cfg.Anomaly.HighlightWindowSec)
+		if len(msg) > 0 {
+			worst := msg[0]
+			icon := "🔺"
+			if worst.Direction == anomaly.DirectionDrop {
+				icon = "🔻"
+			}
+			m.statusMsg = fmt.Sprintf("%s %s=%s %.1fx", icon, worst.Dimension.String(), truncateLabel(worst.Key, 12), worst.Ratio)
+		}
+		cmds = append(cmds, waitForAnomalyEvents(m.anomalyEventsCh))
 
 	case LogErrorMsg:
 		m.statusMsg = fmt.Sprintf("错误: %v", msg.Err)
@@ -161,6 +174,9 @@ func (m AppModel) saveAndQuit() (tea.Model, tea.Cmd) {
 	m.saveConfig()
 	if m.source != nil {
 		m.source.Stop()
+	}
+	if m.anomalyDone != nil {
+		close(m.anomalyDone)
 	}
 	return m, tea.Quit
 }
@@ -855,6 +871,9 @@ func (m *AppModel) ingestEntries(entries []*logentry.Entry) {
 		m.preRenderEntry(entry)
 		m.allEntries.Push(entry)
 		m.maybeTriggerAlert(entry)
+		pkg := m.packageByPID[entry.PID]
+		proc := m.processByPID[entry.PID]
+		m.anomalyDetector.Record(entry, pkg, proc)
 	}
 	m.updateSparkline(len(entries))
 	m.pruneStaleBookmarks()

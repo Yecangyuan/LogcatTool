@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Yecangyuan/LogcatTool/internal/adb"
+	"github.com/Yecangyuan/LogcatTool/internal/anomaly"
 	"github.com/Yecangyuan/LogcatTool/internal/config"
 	"github.com/Yecangyuan/LogcatTool/internal/logentry"
 	"github.com/Yecangyuan/LogcatTool/internal/ringbuf"
@@ -34,6 +35,7 @@ const (
 	ModeDevicePicker
 	ModePkgPicker
 	ModeGotoTime
+	ModeAnomalyPanel
 )
 
 func isFilterInputMode(mode InputMode) bool {
@@ -199,6 +201,12 @@ type AppModel struct {
 	sparklineBins [20]int
 	sparklineIdx  int
 
+	// Anomaly detection
+	anomalyDetector *anomaly.Detector
+	anomaly         anomalyState
+	anomalyEventsCh chan []anomaly.Event
+	anomalyDone     chan struct{}
+
 	// Config persistence
 	cfg config.Config
 }
@@ -328,6 +336,35 @@ func sparklineTickCmd() tea.Cmd {
 	})
 }
 
+func waitForAnomalyEvents(ch <-chan []anomaly.Event) tea.Cmd {
+	return func() tea.Msg {
+		events, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return AnomalyEventsMsg(events)
+	}
+}
+
+func (m *AppModel) anomalyDetectorLoop() {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			events := m.anomalyDetector.Evaluate(time.Now())
+			if len(events) > 0 {
+				select {
+				case m.anomalyEventsCh <- events:
+				default:
+				}
+			}
+		case <-m.anomalyDone:
+			return
+		}
+	}
+}
+
 // --- Constructor ---
 
 type Options struct {
@@ -375,6 +412,20 @@ func New(opts Options) AppModel {
 		cfg:               cfg,
 	}
 
+	m.anomalyDetector = anomaly.NewDetector(anomaly.Config{
+		Enabled:             cfg.Anomaly.Enabled,
+		RecentWindowSec:     cfg.Anomaly.RecentWindowSec,
+		BaselineWindowSec:   cfg.Anomaly.BaselineWindowSec,
+		Multiplier:          cfg.Anomaly.Multiplier,
+		DropMultiplier:      cfg.Anomaly.DropMultiplier,
+		MinBaseline:         cfg.Anomaly.MinBaseline,
+		CooldownSec:         cfg.Anomaly.CooldownSec,
+		MaxKeysPerDimension: cfg.Anomaly.MaxKeysPerDimension,
+	})
+	m.anomalyEventsCh = make(chan []anomaly.Event, 16)
+	m.anomalyDone = make(chan struct{})
+	go m.anomalyDetectorLoop()
+
 	if m.favoritePackages == nil {
 		m.favoritePackages = make(map[string]bool)
 	}
@@ -406,7 +457,7 @@ func New(opts Options) AppModel {
 }
 
 func (m AppModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{sparklineTickCmd()}
+	cmds := []tea.Cmd{sparklineTickCmd(), waitForAnomalyEvents(m.anomalyEventsCh)}
 	if m.filePath != "" {
 		src := source.NewFileSource(m.filePath)
 		cmds = append(cmds, startSourceCmd(src))
