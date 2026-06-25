@@ -2,3 +2,17 @@ logcatool
 logcatool-debug.log
 *.log
 .DS_Store
+
+# Project infrastructure and tooling
+.claude/
+.codex/
+.cursor/
+AGENTS.md
+CLAUDE.md
+HARNESS.md
+harness/
+openspec/
+docs/
+
+# Temp files
+logcatool.tmp.*
