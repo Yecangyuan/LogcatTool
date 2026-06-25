@@ -491,6 +491,7 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    y           复制当前行到剪贴板\n")
 	sb.WriteString("    B           切换日志缓冲区\n")
 	sb.WriteString("    a           打开统计面板\n")
+	sb.WriteString("    Y           打开异常检测面板\n")
 	sb.WriteString("    F           收藏当前应用/进程\n")
 	sb.WriteString("    z           折叠连续重复日志\n")
 	sb.WriteString("    o           折叠/展开崩溃栈帧\n")
