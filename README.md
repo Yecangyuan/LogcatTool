@@ -59,6 +59,30 @@ go build -o logcattool .
 
 > 二进制名称取决于你的安装 / 构建方式。下面的命令示例统一使用 `logcattool` 代称；如果你本地构建成了 `LogcatTool`，把命令名替换成对应文件名即可。
 
+## Windows 7 支持
+
+Windows 7 用户请使用 `go-win7` 分支发布的专用构建。该构建使用 [XTLS/go-win7](https://github.com/XTLS/go-win7) 打过补丁的 Go SDK，可在 Windows 7 SP1（需安装 [KB3125574](https://support.microsoft.com/kb/3125574) Convenience Rollup）上运行。
+
+### 手动安装
+
+1. 打开 [Releases](https://github.com/Yecangyuan/LogcatTool/releases) 页面
+2. 下载 `logcatool_<version>_windows_amd64.zip`
+3. 解压后将 `logcatool.exe` 放到 PATH 中的目录
+
+### 一键安装（PowerShell）
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+Invoke-RestMethod -Uri https://raw.githubusercontent.com/Yecangyuan/LogcatTool/go-win7/install.ps1 | Invoke-Expression
+```
+
+默认安装到 `%LOCALAPPDATA%\Programs\logcatool`。
+
+### 使用建议
+
+- Windows 7 默认控制台对 ANSI/VT 序列支持有限，建议配合 **ConEmu**、**Cmder** 或 **Git Bash** 使用，以获得完整 TUI 体验。
+- 实时模式需要 `adb.exe` 在 PATH 中。
+
 ## 使用
 
 ### 实时查看设备日志

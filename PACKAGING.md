@@ -244,6 +244,34 @@ git push origin v0.1.1
 
 ---
 
+## Windows 7 专用分支
+
+`go-win7` 分支用于构建能在 Windows 7 SP1 上运行的二进制文件。该分支使用 [XTLS/go-win7](https://github.com/XTLS/go-win7) 打过补丁的 Go SDK 进行交叉编译，产物为 `logcatool_<version>_windows_amd64.zip`。
+
+### 使用条件
+
+- Windows 7 SP1
+- 必须安装 Convenience Rollup [KB3125574](https://support.microsoft.com/kb/3125574)
+
+### 发布产物
+
+Windows 7 构建通过 `.github/workflows/release.yml` 中的 `build-windows7` job 生成，并随 Release 一起发布。Homebrew 更新任务保持不变，仅包含 macOS / Linux 平台。
+
+### PowerShell 安装脚本
+
+`go-win7` 分支提供 `install.ps1`，支持一键安装：
+
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+Invoke-RestMethod -Uri https://raw.githubusercontent.com/Yecangyuan/LogcatTool/go-win7/install.ps1 | Invoke-Expression
+```
+
+### 终端建议
+
+Windows 7 默认 `cmd.exe` 对 ANSI/VT 序列支持有限，TUI 可能出现渲染问题。建议用户配合 **ConEmu**、**Cmder** 或 **Git Bash** 使用。
+
+---
+
 ## 其他包管理器
 
 ### Snap（Ubuntu 官方商店）
@@ -284,7 +312,7 @@ snapcraft upload --release=stable logcatool_0.1.0_amd64.snap
 
 ### Scoop（Windows）
 
-创建 `scoop/logcatool.json`：
+`go-win7` 分支发布的 `logcatool_<version>_windows_amd64.zip` 可直接用于 Scoop manifest。创建 `scoop/logcatool.json`：
 
 ```json
 {
@@ -294,13 +322,23 @@ snapcraft upload --release=stable logcatool_0.1.0_amd64.snap
   "license": "MIT",
   "architecture": {
     "64bit": {
-      "url": "https://github.com/Yecangyuan/LogcatTool/releases/download/v0.1.0/logcatool_0.1.0_windows_amd64.zip",
+      "url": "https://github.com/Yecangyuan/LogcatTool/releases/download/v0.1.0/logcatool_v0.1.0_windows_amd64.zip",
       "hash": "sha256_hash_here"
     }
   },
   "bin": "logcatool.exe"
 }
 ```
+
+获取 `sha256_hash_here`：
+
+```bash
+curl -sL -o logcatool_v0.1.0_windows_amd64.zip \
+  https://github.com/Yecangyuan/LogcatTool/releases/download/v0.1.0/logcatool_v0.1.0_windows_amd64.zip
+shasum -a 256 logcatool_v0.1.0_windows_amd64.zip
+```
+
+注意：Windows 7 用户需满足 [KB3125574](https://support.microsoft.com/kb/3125574) 前提。Windows 10/11 用户可直接使用标准版本。
 
 ---
 
