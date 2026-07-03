@@ -39,16 +39,16 @@ jobs:
           cp logcatool debian/usr/bin/
           
           cat > debian/DEBIAN/control << EOF
-      Package: logcatool
-      Version: ${VERSION}
-      Section: utils
-      Priority: optional
-      Architecture: ${{ matrix.arch }}
-      Maintainer: simley <your-email@example.com>
-      Description: 终端版 Android Logcat 查看器
-       基于 Bubble Tea 构建的终端版 Android Logcat 查看器，
-       支持实时日志流、日志文件读取、搜索过滤等功能。
-      EOF
+          Package: logcatool
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: ${{ matrix.arch }}
+          Maintainer: simley <your-email@example.com>
+          Description: 终端版 Android Logcat 查看器
+           基于 Bubble Tea 构建的终端版 Android Logcat 查看器，
+           支持实时日志流、日志文件读取、搜索过滤等功能。
+          EOF
           
           dpkg-deb --build debian logcatool_${VERSION}_${{ matrix.arch }}.deb
 
