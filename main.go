@@ -29,7 +29,7 @@ func main() {
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("LogCaTool v%s\n", version)
+		fmt.Printf("LogcatTool v%s\n", version)
 		os.Exit(0)
 	}
 
