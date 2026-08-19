@@ -82,7 +82,7 @@ func BenchmarkExportTextCommand(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if msg := exportLogsCmd(entries)(); isLogError(msg) {
+		if msg := exportLogsCmd(entries, exportFileTypeTXT)(); isLogError(msg) {
 			b.Fatalf("export failed: %v", msg)
 		}
 	}

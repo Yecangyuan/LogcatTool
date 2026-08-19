@@ -36,6 +36,7 @@ const (
 	ModeGotoTime
 	ModeAnomalyPanel
 	ModeExportPanel
+	ModeExportFormat
 	ModeProfilePanel
 	ModeProfileName
 )
@@ -298,16 +299,22 @@ func startSourceCmd(src source.LogSource) tea.Cmd {
 	}
 }
 
-func exportLogsCmd(entries []*logentry.Entry) tea.Cmd {
+func exportLogsCmd(entries []*logentry.Entry, fileType exportFileType) tea.Cmd {
 	return func() tea.Msg {
-		filename := fmt.Sprintf("logcat_%s.txt", time.Now().Format("20060102_150405"))
+		filename := fmt.Sprintf("logcat_%s.%s", time.Now().Format("20060102_150405"), fileType.extension())
 		f, err := os.Create(filename)
 		if err != nil {
 			return LogErrorMsg{Err: fmt.Errorf("导出失败: %w", err)}
 		}
 		defer f.Close()
-		if err := writeTextLogs(f, entries); err != nil {
-			return LogErrorMsg{Err: fmt.Errorf("导出失败: %w", err)}
+		if fileType == exportFileTypeMD {
+			if err := writeMarkdownLogs(f, entries); err != nil {
+				return LogErrorMsg{Err: fmt.Errorf("导出失败: %w", err)}
+			}
+		} else {
+			if err := writeTextLogs(f, entries); err != nil {
+				return LogErrorMsg{Err: fmt.Errorf("导出失败: %w", err)}
+			}
 		}
 		return ExportDoneMsg{Path: filename}
 	}

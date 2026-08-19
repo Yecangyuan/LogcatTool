@@ -206,3 +206,86 @@ func TestExportPanelBindingOpensPanel(t *testing.T) {
 		t.Fatalf("inputMode = %v, want %v", updated.inputMode, ModeExportPanel)
 	}
 }
+
+func TestWriteMarkdownLogs(t *testing.T) {
+	var out bytes.Buffer
+	entries := exportTestEntries()
+	if err := writeMarkdownLogs(&out, entries); err != nil {
+		t.Fatalf("writeMarkdownLogs: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{"# Logcat 日志导出", "raw one", "raw two", "```"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("markdown export missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestQuickExportTypesDefaultIsLog(t *testing.T) {
+	types := quickExportTypes()
+	want := []exportFileType{exportFileTypeTXT, exportFileTypeLOG, exportFileTypeMD}
+	if len(types) != len(want) {
+		t.Fatalf("quick export types = %d, want %d", len(types), len(want))
+	}
+	for i := range want {
+		if types[i] != want[i] {
+			t.Fatalf("types[%d] = %v, want %v", i, types[i], want[i])
+		}
+	}
+	if got, want := quickExportDefaultIndex(), 1; got != want {
+		t.Fatalf("default index = %d, want %d (.log)", got, want)
+	}
+	if got := types[quickExportDefaultIndex()].extension(); got != "log" {
+		t.Fatalf("default extension = %q, want log", got)
+	}
+}
+
+func TestExportKeyOpensFormatPickerWithLogDefault(t *testing.T) {
+	base := time.Date(2026, 6, 25, 10, 30, 0, 0, time.UTC)
+	m := New(Options{BufferSize: 8})
+	defer m.anomalyDetector.Stop()
+	m.ingestEntries([]*logentry.Entry{
+		testWindowEntry(base, "NetworkManager", "first"),
+	})
+	model, _ := m.Update(tea.KeyPressMsg(tea.Key{Code: 'e', Text: "e"}))
+	updated := model.(AppModel)
+	if updated.inputMode != ModeExportFormat {
+		t.Fatalf("inputMode = %v, want %v", updated.inputMode, ModeExportFormat)
+	}
+	if updated.exportSelection != quickExportDefaultIndex() {
+		t.Fatalf("exportSelection = %d, want %d (.log)", updated.exportSelection, quickExportDefaultIndex())
+	}
+}
+
+func TestExportLogsCmdWritesChosenExtension(t *testing.T) {
+	entries := exportTestEntries()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = os.Chdir(wd)
+	}()
+
+	for _, ft := range quickExportTypes() {
+		msg := exportLogsCmd(entries, ft)()
+		done, ok := msg.(ExportDoneMsg)
+		if !ok {
+			t.Fatalf("export(%v) msg = %#v, want ExportDoneMsg", ft, msg)
+		}
+		if got := filepath.Ext(done.Path); got != ft.Label() {
+			t.Fatalf("export(%v) path = %q, want %s", ft, done.Path, ft.Label())
+		}
+		data, err := os.ReadFile(done.Path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ft == exportFileTypeMD && !strings.Contains(string(data), "```") {
+			t.Fatalf("markdown export missing code fence:\n%s", string(data))
+		}
+	}
+}

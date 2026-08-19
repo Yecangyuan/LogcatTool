@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -111,6 +112,52 @@ func (f exportFormat) extension() string {
 	}
 }
 
+// exportFileType 表示 e 键快速导出时可选的文件类型（扩展名）。
+type exportFileType int
+
+const (
+	exportFileTypeTXT exportFileType = iota
+	exportFileTypeLOG
+	exportFileTypeMD
+)
+
+func (f exportFileType) Label() string {
+	switch f {
+	case exportFileTypeLOG:
+		return ".log"
+	case exportFileTypeMD:
+		return ".md"
+	default:
+		return ".txt"
+	}
+}
+
+func (f exportFileType) extension() string {
+	switch f {
+	case exportFileTypeLOG:
+		return "log"
+	case exportFileTypeMD:
+		return "md"
+	default:
+		return "txt"
+	}
+}
+
+// quickExportTypes 返回 e 键快速导出可选的文件类型，按展示顺序排列。
+func quickExportTypes() []exportFileType {
+	return []exportFileType{exportFileTypeTXT, exportFileTypeLOG, exportFileTypeMD}
+}
+
+// quickExportDefaultIndex 返回快速导出默认选中的文件类型下标（默认 .log）。
+func quickExportDefaultIndex() int {
+	for i, ft := range quickExportTypes() {
+		if ft == exportFileTypeLOG {
+			return i
+		}
+	}
+	return 0
+}
+
 func writeTextLogs(w io.Writer, entries []*logentry.Entry) error {
 	for _, e := range entries {
 		if _, err := io.WriteString(w, e.Raw); err != nil {
@@ -121,6 +168,21 @@ func writeTextLogs(w io.Writer, entries []*logentry.Entry) error {
 		}
 	}
 	return nil
+}
+
+func writeMarkdownLogs(w io.Writer, entries []*logentry.Entry) error {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "# Logcat 日志导出\n\n")
+	fmt.Fprintf(&sb, "- 导出时间: %s\n", time.Now().Format("2006-01-02 15:04:05"))
+	fmt.Fprintf(&sb, "- 日志条数: %d\n\n", len(entries))
+	sb.WriteString("```\n")
+	for _, e := range entries {
+		sb.WriteString(e.Raw)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("```\n")
+	_, err := io.WriteString(w, sb.String())
+	return err
 }
 
 func writeJSONLogs(w io.Writer, entries []*logentry.Entry) error {

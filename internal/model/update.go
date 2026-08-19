@@ -220,6 +220,8 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleAnomalyPanelKey(msg)
 	case ModeExportPanel:
 		return m.handleExportPanelKey(msg)
+	case ModeExportFormat:
+		return m.handleExportFormatKey(msg)
 	case ModeProfilePanel:
 		return m.handleProfilePanelKey(msg)
 	case ModeProfileName:
@@ -366,7 +368,9 @@ func (m AppModel) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case key.Matches(msg, m.keys.Export):
 		if len(m.filtered) > 0 {
-			return m, exportLogsCmd(m.filtered)
+			m.inputMode = ModeExportFormat
+			m.exportSelection = quickExportDefaultIndex()
+			return m, nil
 		}
 		m.statusMsg = "没有日志可导出"
 		return m, nil
@@ -841,6 +845,35 @@ func (m AppModel) handleExportPanelKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd)
 		}
 		m.inputMode = ModeNormal
 		return m, m.exportScopedLogsCmd(option.Scope, option.Format)
+	case key.Matches(msg, m.keys.Quit):
+		return m.saveAndQuit()
+	}
+	return m, nil
+}
+
+func (m AppModel) handleExportFormatKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	types := quickExportTypes()
+	if m.exportSelection >= len(types) && len(types) > 0 {
+		m.exportSelection = len(types) - 1
+	}
+	switch {
+	case key.Matches(msg, m.keys.Cancel, m.keys.Export, m.keys.ExportPanel):
+		m.inputMode = ModeNormal
+		return m, nil
+	case key.Matches(msg, m.keys.Up):
+		if m.exportSelection > 0 {
+			m.exportSelection--
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Down):
+		if m.exportSelection < len(types)-1 {
+			m.exportSelection++
+		}
+		return m, nil
+	case key.Matches(msg, m.keys.Confirm):
+		fileType := types[m.exportSelection]
+		m.inputMode = ModeNormal
+		return m, exportLogsCmd(m.filtered, fileType)
 	case key.Matches(msg, m.keys.Quit):
 		return m.saveAndQuit()
 	}

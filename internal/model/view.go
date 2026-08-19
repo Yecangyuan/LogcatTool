@@ -73,6 +73,9 @@ func (m AppModel) View() tea.View {
 	if m.inputMode == ModeExportPanel {
 		content = m.overlayExportPanel(content)
 	}
+	if m.inputMode == ModeExportFormat {
+		content = m.overlayExportFormat(content)
+	}
 	if m.inputMode == ModeProfilePanel {
 		content = m.overlayProfilePanel(content)
 	}
@@ -493,7 +496,7 @@ func (m AppModel) renderHelp() string {
 	sb.WriteString("    + / -       回放模式加速/减速\n")
 	sb.WriteString("    c           清除日志 (同时清除设备缓冲区)\n")
 	sb.WriteString("    d           选择设备\n")
-	sb.WriteString("    e           导出日志 (文本)\n")
+	sb.WriteString("    e           导出日志 (.txt/.log/.md)\n")
 	sb.WriteString("    Ctrl+e      导出日志 (JSON)\n")
 	sb.WriteString("    O           打开导出面板\n")
 	sb.WriteString("    U           打开配置面板\n")
@@ -744,6 +747,42 @@ func (m AppModel) overlayExportPanel(bg string) string {
 	}
 
 	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter导出 O/Esc关闭"))
+	panel := ui.DevicePickerStyle.Render(sb.String())
+	x := (m.width - lipgloss.Width(panel)) / 2
+	y := (m.height - lipgloss.Height(panel)) / 2
+	if x < 0 {
+		x = 0
+	}
+	if y < 0 {
+		y = 0
+	}
+	return placeOverlay(x, y, panel, bg)
+}
+
+func (m AppModel) overlayExportFormat(bg string) string {
+	types := quickExportTypes()
+	var sb strings.Builder
+	sb.WriteString(ui.HelpTitleStyle.Render("导出格式") + "\n\n")
+
+	if len(types) == 0 {
+		sb.WriteString(lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  暂无导出选项"))
+	} else {
+		for i, ft := range types {
+			cursor := "  "
+			if i == m.exportSelection {
+				cursor = "▸ "
+			}
+			line := fmt.Sprintf("%s%-10s", cursor, ft.Label())
+			if i == m.exportSelection {
+				sb.WriteString(ui.DeviceSelectedStyle.Render(line))
+			} else {
+				sb.WriteString(ui.DeviceNormalStyle.Render(line))
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	sb.WriteString("\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("  j/k选择 Enter导出 Esc取消"))
 	panel := ui.DevicePickerStyle.Render(sb.String())
 	x := (m.width - lipgloss.Width(panel)) / 2
 	y := (m.height - lipgloss.Height(panel)) / 2
