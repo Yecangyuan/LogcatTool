@@ -289,3 +289,62 @@ func TestExportLogsCmdWritesChosenExtension(t *testing.T) {
 		}
 	}
 }
+
+func TestExportFormatFlowExportsSelectedType(t *testing.T) {
+	base := time.Date(2026, 6, 25, 10, 30, 0, 0, time.UTC)
+	m := New(Options{BufferSize: 8})
+	defer m.anomalyDetector.Stop()
+	m.ingestEntries([]*logentry.Entry{
+		testWindowEntry(base, "NetworkManager", "first"),
+	})
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	if err := os.Chdir(tmp); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = os.Chdir(wd)
+	}()
+
+	// 'e' opens the format picker with .log preselected
+	model, cmd := m.Update(tea.KeyPressMsg(tea.Key{Code: 'e', Text: "e"}))
+	updated := model.(AppModel)
+	if updated.inputMode != ModeExportFormat {
+		t.Fatalf("inputMode = %v, want %v", updated.inputMode, ModeExportFormat)
+	}
+
+	// Down selects .md
+	model, _ = updated.Update(tea.KeyPressMsg(tea.Key{Code: 'j', Text: "j"}))
+	updated = model.(AppModel)
+	if got := quickExportTypes()[updated.exportSelection].extension(); got != "md" {
+		t.Fatalf("selection extension = %q, want md", got)
+	}
+
+	// Enter confirms the export and the returned cmd writes the file
+	model, cmd = updated.Update(tea.KeyPressMsg(tea.Key{Code: tea.KeyEnter}))
+	updated = model.(AppModel)
+	if updated.inputMode != ModeNormal {
+		t.Fatalf("inputMode after confirm = %v, want %v", updated.inputMode, ModeNormal)
+	}
+	if cmd == nil {
+		t.Fatal("expected export cmd from Enter")
+	}
+	if msg := cmd(); isLogError(msg) {
+		t.Fatalf("export cmd failed: %#v", msg)
+	}
+
+	entries, err := os.ReadDir(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("exported files = %d, want 1", len(entries))
+	}
+	if got := filepath.Ext(entries[0].Name()); got != ".md" {
+		t.Fatalf("exported file = %q, want .md", entries[0].Name())
+	}
+}
