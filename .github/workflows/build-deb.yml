@@ -28,7 +28,7 @@ jobs:
           GOARCH: ${{ matrix.arch }}
           CGO_ENABLED: 0
         run: |
-          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o logcatool
+          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o LogcatTool
 
       - name: Build Debian Package
         run: |
@@ -36,7 +36,7 @@ jobs:
           mkdir -p debian/DEBIAN
           mkdir -p debian/usr/bin
           
-          cp logcatool debian/usr/bin/
+          cp LogcatTool debian/usr/bin/
           
           cat > debian/DEBIAN/control << EOF
       Package: logcatool

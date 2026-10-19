@@ -1,4 +1,4 @@
-# LogCaTool
+# LogcatTool
 
 基于 [Bubble Tea](https://github.com/charmbracelet/bubbletea) 的 Android Logcat 终端查看器，目标是提供接近 Android Studio Logcat 的实时查看、过滤和定位体验。
 
@@ -27,6 +27,7 @@
 - **搜索历史**：输入搜索时按 `↑/↓` 快速翻阅最近 20 条搜索记录
 - **跳转到时间**：按 `T` 输入时间戳（如 `14:32:05` 或 `-5m`）快速定位日志
 - **崩溃栈折叠**：在崩溃模式下按 `o` 折叠/展开连续栈帧
+- **多行堆栈合并**：Java / Kotlin 崩溃堆栈的续行会自动归并到所属日志，不再丢失栈帧
 - **快速导出**：按 `e` 选择 .txt / .log / .md 文件类型导出当前过滤日志（默认 .log）
 - **JSON 导出**：按 `Ctrl+e` 导出结构化 JSON 日志
 - **高级导出面板**：按 `O` 选择 Text / JSON / CSV / NDJSON 与过滤 / 书签 / 可见窗口 / 异常窗口范围
@@ -36,54 +37,108 @@
 
 ## 前置条件
 
-- Go 1.25+
+- Go 1.25.1+（仅源码构建 / `go install` 需要）
 - Android SDK Platform Tools（`adb` 可用）
 - Android 设备已开启 USB 调试（实时模式）
 
 ## 安装
 
-### 方式一：直接安装
+> 无论用哪种方式安装，**可执行文件名统一为 `LogcatTool`**。
+
+### 方式一：一键脚本（推荐，macOS / Linux）
+
+仓库自带 `install.sh`，会自动构建、安装二进制，并创建配置目录。
+
+```bash
+git clone https://github.com/Yecangyuan/LogcatTool.git
+cd LogcatTool
+./install.sh --user          # 安装到 ~/.local/bin，不需要 sudo
+```
+
+其他用法：
+
+```bash
+sudo ./install.sh            # 安装到 /usr/local/bin
+./install.sh --prefix /opt   # 安装到自定义前缀（即 /opt/bin）
+```
+
+如果 `~/.local/bin` 不在 `PATH` 中，脚本会提示，按下面加入即可：
+
+```bash
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc
+```
+
+### 方式二：go install
 
 ```bash
 go install github.com/Yecangyuan/LogcatTool@latest
 ```
 
-安装后可执行文件会出现在 `$GOBIN`（未设置时通常是 `$GOPATH/bin`）里。
+可执行文件为 `$GOBIN/LogcatTool`（未设置 `GOBIN` 时是 `$(go env GOPATH)/bin/LogcatTool`）。
 
-### 方式二：从源码构建
+### 方式三：从源码构建
 
 ```bash
 git clone https://github.com/Yecangyuan/LogcatTool.git
-cd logcatool
-go build -o logcattool .
+cd LogcatTool
+go build -ldflags "-s -w" -o LogcatTool .
 ```
 
-> 二进制名称取决于你的安装 / 构建方式。下面的命令示例统一使用 `logcattool` 代称；如果你本地构建成了 `LogcatTool`，把命令名替换成对应文件名即可。
+### 方式四：下载预编译包
+
+```bash
+# Apple Silicon 用 darwin_arm64，Intel Mac 用 darwin_amd64
+curl -LO https://github.com/Yecangyuan/LogcatTool/releases/download/v0.1.0/logcatool_v0.1.0_darwin_arm64.tar.gz
+tar -xzf logcatool_v0.1.0_darwin_arm64.tar.gz
+sudo mv LogcatTool /usr/local/bin/
+```
+
+macOS 首次运行若被 Gatekeeper 拦截：
+
+```bash
+xattr -d com.apple.quarantine /usr/local/bin/LogcatTool
+```
+
+### 方式五：Homebrew
+
+```bash
+brew tap simley/tap
+brew install logcatool        # 包名是 logcatool，装出来的命令是 LogcatTool
+```
+
+### 卸载
+
+```bash
+./install.sh --uninstall --user    # 对应 --user 安装
+sudo ./install.sh --uninstall      # 对应 /usr/local/bin 安装
+```
+
+> **关于命名**：Homebrew / apt 等包管理器的**包名**受各自规则限制，仍为小写 `logcatool`；**可执行文件名**统一为 `LogcatTool`。配置文件路径固定为 `~/.config/logcatool/config.json`，与旧版本兼容，无需迁移。
 
 ## 使用
 
 ### 实时查看设备日志
 
 ```bash
-logcattool
+LogcatTool
 ```
 
 ### 指定设备
 
 ```bash
-logcattool -s <设备序列号>
+LogcatTool -s <设备序列号>
 ```
 
 ### 读取日志文件
 
 ```bash
-logcattool -f logcat.txt
+LogcatTool -f logcat.txt
 ```
 
 ### 按时间戳回放日志文件
 
 ```bash
-logcattool -f logcat.txt --replay --replay-speed 2
+LogcatTool -f logcat.txt --replay --replay-speed 2
 ```
 
 回放模式下可在 TUI 内按 `+` / `-` 调整后续回放速度，按 `Space` 暂停 / 恢复。
@@ -91,13 +146,13 @@ logcattool -f logcat.txt --replay --replay-speed 2
 ### 比较两份日志
 
 ```bash
-logcattool --diff-base before.txt --diff-candidate after.txt
+LogcatTool --diff-base before.txt --diff-candidate after.txt
 ```
 
 ### 自定义缓冲区大小
 
 ```bash
-logcattool -n 100000
+LogcatTool -n 100000
 ```
 
 ## 参数
@@ -265,6 +320,7 @@ com.huawei.smarthome.extend:p9
 - 使用**虚拟滚动**，只渲染可见日志行
 - 使用**手写解析器**替代正则解析 threadtime 行
 - 每条日志会缓存基础渲染结果，减少重复样式计算
+- 单行日志超过 8 MB 时会截断并标注，不会中断整条日志流
 - 书签只对仍在本地缓冲区中的日志有效；当旧日志被 ring buffer 淘汰后，对应书签会自动清理
 
 ## 许可证

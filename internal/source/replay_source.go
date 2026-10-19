@@ -1,8 +1,8 @@
 package source
 
 import (
-	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"sync"
@@ -212,18 +212,18 @@ func readReplayEntries(path string) ([]*logentry.Entry, error) {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	reader := logentry.NewStreamReader(f)
 
 	var entries []*logentry.Entry
-	for scanner.Scan() {
-		entry := logentry.Parse(scanner.Text())
-		if entry != nil {
-			entries = append(entries, entry)
+	for {
+		entry, err := reader.Next()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, err
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
+		entries = append(entries, entry)
 	}
 	return entries, nil
 }

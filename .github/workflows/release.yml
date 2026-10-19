@@ -39,8 +39,8 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o logcatool
-          tar -czf logcatool_${{ github.ref_name }}_${{ matrix.suffix }}.tar.gz logcatool
+          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o LogcatTool
+          tar -czf logcatool_${{ github.ref_name }}_${{ matrix.suffix }}.tar.gz LogcatTool
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -123,11 +123,11 @@ jobs:
         end
       
         def install
-          bin.install "logcatool"
+          bin.install "LogcatTool"
         end
       
         test do
-          system "#{bin}/logcatool", "-v"
+          system "#{bin}/LogcatTool", "-v"
         end
       end
       EOF

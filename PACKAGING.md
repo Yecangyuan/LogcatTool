@@ -2,6 +2,8 @@
 
 本文档说明如何将 logcatool 发布到 Homebrew 和 APT 包管理器。
 
+> **命名约定**：可执行文件统一为 **`LogcatTool`**。包管理器侧的**包名**（`Package:` / `brew install` 的 formula 名）沿用各自生态惯例保持小写 `logcatool`，仅可执行文件名与构建产物名为 `LogcatTool`。
+
 ## 目录
 
 - [Homebrew 发布](#homebrew-发布)
@@ -162,10 +164,10 @@ export GO111MODULE := on
 	dh $@ --buildsystem=golang --builddirectory=_build
 
 override_dh_auto_build:
-	go build -ldflags "-s -w" -o logcatool
+	go build -ldflags "-s -w" -o LogcatTool
 
 override_dh_auto_install:
-	install -D -m 0755 logcatool debian/logcatool/usr/bin/logcatool
+	install -D -m 0755 LogcatTool debian/logcatool/usr/bin/LogcatTool
 ```
 
 #### 5. 构建并上传
@@ -270,7 +272,7 @@ parts:
 
 apps:
   logcatool:
-    command: bin/logcatool
+    command: bin/LogcatTool
     plugs:
       - home
       - removable-media
@@ -298,7 +300,7 @@ snapcraft upload --release=stable logcatool_0.1.0_amd64.snap
       "hash": "sha256_hash_here"
     }
   },
-  "bin": "logcatool.exe"
+  "bin": "LogcatTool.exe"
 }
 ```
 

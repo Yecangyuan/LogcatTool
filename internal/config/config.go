@@ -123,43 +123,70 @@ func Load() (Config, error) {
 	if err := json.Unmarshal(data, &c); err != nil {
 		return Config{Anomaly: DefaultAnomalyConfig()}, fmt.Errorf("parse config: %w", err)
 	}
-	c.Anomaly = mergeAnomalyConfig(c.Anomaly, DefaultAnomalyConfig())
+	c.Anomaly = mergeAnomalyConfig(c.Anomaly, DefaultAnomalyConfig(), anomalyKeysPresent(data))
 	return c, nil
 }
 
-func mergeAnomalyConfig(user, def AnomalyConfig) AnomalyConfig {
-	// Merge only when user value is the zero value. For booleans and drop multiplier,
-	// zero is a valid explicit value, so we only apply defaults when the user config
-	// does not specify them at all. We detect "not specified" via an empty Dimensions map
-	// and zero numeric fields that cannot reasonably be zero in a valid config.
-	if !user.Enabled && len(user.Dimensions) == 0 {
+// anomalyKeysPresent reports which JSON keys the user's `anomaly` object actually
+// contains.
+//
+// Zero values alone are ambiguous: `"enabled": false` and a config that omits
+// `enabled` entirely both decode to false, yet only the first is an explicit
+// choice. Tracking key presence lets merging respect what the user wrote instead
+// of silently switching anomaly detection back on.
+func anomalyKeysPresent(data []byte) map[string]bool {
+	var envelope struct {
+		Anomaly map[string]json.RawMessage `json:"anomaly"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		return nil
+	}
+	present := make(map[string]bool, len(envelope.Anomaly))
+	for key := range envelope.Anomaly {
+		present[key] = true
+	}
+	return present
+}
+
+func mergeAnomalyConfig(user, def AnomalyConfig, present map[string]bool) AnomalyConfig {
+	// An explicit key wins even when its value is the zero value. Without
+	// presence information (a Config that never came from disk) fall back to
+	// filling in zero fields, which matches the historical behaviour.
+	specified := func(key string) bool {
+		if present == nil {
+			return false
+		}
+		return present[key]
+	}
+
+	if !specified("enabled") && !user.Enabled {
 		user.Enabled = def.Enabled
 	}
-	if user.RecentWindowSec == 0 {
+	if !specified("recent_window_sec") && user.RecentWindowSec == 0 {
 		user.RecentWindowSec = def.RecentWindowSec
 	}
-	if user.BaselineWindowSec == 0 {
+	if !specified("baseline_window_sec") && user.BaselineWindowSec == 0 {
 		user.BaselineWindowSec = def.BaselineWindowSec
 	}
-	if user.Multiplier == 0 {
+	if !specified("multiplier") && user.Multiplier == 0 {
 		user.Multiplier = def.Multiplier
 	}
-	if user.DropMultiplier == 0 && len(user.Dimensions) == 0 {
+	if !specified("drop_multiplier") && user.DropMultiplier == 0 {
 		user.DropMultiplier = def.DropMultiplier
 	}
-	if user.MinBaseline == 0 {
+	if !specified("min_baseline") && user.MinBaseline == 0 {
 		user.MinBaseline = def.MinBaseline
 	}
-	if user.HighlightWindowSec == 0 {
+	if !specified("highlight_window_sec") && user.HighlightWindowSec == 0 {
 		user.HighlightWindowSec = def.HighlightWindowSec
 	}
-	if user.MaxKeysPerDimension == 0 {
+	if !specified("max_keys_per_dimension") && user.MaxKeysPerDimension == 0 {
 		user.MaxKeysPerDimension = def.MaxKeysPerDimension
 	}
-	if user.CooldownSec == 0 {
+	if !specified("cooldown_sec") && user.CooldownSec == 0 {
 		user.CooldownSec = def.CooldownSec
 	}
-	if user.Strategy == "" {
+	if !specified("strategy") && user.Strategy == "" {
 		user.Strategy = def.Strategy
 	}
 	if user.Dimensions == nil {
@@ -178,8 +205,49 @@ func Save(c Config) error {
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
-	if err := os.WriteFile(p, data, 0644); err != nil {
+	if err := writeFileAtomic(p, data, 0644); err != nil {
 		return fmt.Errorf("write config: %w", err)
+	}
+	return nil
+}
+
+// writeFileAtomic replaces path via a temporary file in the same directory that
+// is fsynced and then renamed into place.
+//
+// Writing the config in place risks leaving truncated JSON behind if the process
+// dies mid-write; the next Load would fail to parse it and drop every saved
+// favourite, preset, and search-history entry.
+func writeFileAtomic(target string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(target)
+
+	tmp, err := os.CreateTemp(dir, ".config-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	// Flush to disk before renaming so a crash cannot publish an empty file.
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("sync temp config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("close temp config: %w", err)
+	}
+	if err := os.Chmod(tmpName, perm); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("chmod temp config: %w", err)
+	}
+	if err := os.Rename(tmpName, target); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("replace config: %w", err)
 	}
 	return nil
 }

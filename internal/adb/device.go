@@ -2,11 +2,46 @@ package adb
 
 import (
 	"bufio"
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"sort"
 	"strings"
+	"time"
 )
+
+// adbTimeout bounds every one-shot adb invocation.
+//
+// These calls run synchronously from the TUI update loop, so without a deadline
+// a hung `adb server` or a half-disconnected USB device freezes the whole UI
+// with no way to interrupt it.
+const adbTimeout = 15 * time.Second
+
+// runADB executes a one-shot adb command with a deadline and returns its stdout.
+// stderr is captured so failures carry the device's own message instead of a
+// bare exit status.
+func runADB(adbPath string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), adbTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, adbPath, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	out, err := cmd.Output()
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return out, fmt.Errorf("adb %s 超时(%s)", strings.Join(args, " "), adbTimeout)
+		}
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return out, fmt.Errorf("adb %s 失败: %w: %s", strings.Join(args, " "), err, msg)
+		}
+		return out, fmt.Errorf("adb %s 失败: %w", strings.Join(args, " "), err)
+	}
+	return out, nil
+}
 
 type Device struct {
 	Serial string
@@ -30,13 +65,13 @@ func FindADB() (string, error) {
 }
 
 func ListDevices(adbPath string) ([]Device, error) {
-	out, err := exec.Command(adbPath, "devices", "-l").Output()
+	out, err := runADB(adbPath, "devices", "-l")
 	if err != nil {
 		return nil, fmt.Errorf("adb devices 失败: %w", err)
 	}
 
 	var devices []Device
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "List of") || strings.TrimSpace(line) == "" {
@@ -82,13 +117,13 @@ func GetPackagePIDs(adbPath, serial string) (map[string][]int, error) {
 // tryPsModern tries `ps -A -o PID,NAME` (Android 8+).
 func tryPsModern(adbPath string, baseArgs []string) map[string][]int {
 	args := append(append([]string{}, baseArgs...), "shell", "ps", "-A", "-o", "PID,NAME")
-	out, err := exec.Command(adbPath, args...).Output()
+	out, err := runADB(adbPath, args...)
 	if err != nil {
 		return nil
 	}
 
 	result := make(map[string][]int)
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) < 2 {
@@ -107,13 +142,13 @@ func tryPsModern(adbPath string, baseArgs []string) map[string][]int {
 // tryPsLegacy parses `ps` output (older Android, 8+ columns: USER PID PPID ... NAME).
 func tryPsLegacy(adbPath string, baseArgs []string) (map[string][]int, error) {
 	args := append(append([]string{}, baseArgs...), "shell", "ps")
-	out, err := exec.Command(adbPath, args...).Output()
+	out, err := runADB(adbPath, args...)
 	if err != nil {
 		return nil, fmt.Errorf("adb shell ps 失败: %w", err)
 	}
 
 	result := make(map[string][]int)
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) < 2 {
@@ -139,13 +174,13 @@ func ListPackages(adbPath, serial string) ([]string, error) {
 	}
 	args = append(args, "shell", "pm", "list", "packages")
 
-	out, err := exec.Command(adbPath, args...).Output()
+	out, err := runADB(adbPath, args...)
 	if err != nil {
 		return nil, fmt.Errorf("adb shell pm list packages 失败: %w", err)
 	}
 
 	var packages []string
-	scanner := bufio.NewScanner(strings.NewReader(string(out)))
+	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
 		line := scanner.Text()
 		pkg := strings.TrimPrefix(line, "package:")

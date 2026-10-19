@@ -1,8 +1,8 @@
 package source
 
 import (
-	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 
@@ -30,6 +30,7 @@ func (s *FileSource) Start() (<-chan *logentry.Entry, <-chan error) {
 	s.mu.Lock()
 	s.running = true
 	s.done = make(chan struct{})
+	done := s.done
 	s.mu.Unlock()
 
 	go func() {
@@ -48,35 +49,28 @@ func (s *FileSource) Start() (<-chan *logentry.Entry, <-chan error) {
 		}
 		defer f.Close()
 
-		scanner := bufio.NewScanner(f)
-		scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
+		reader := logentry.NewStreamReader(f)
 		index := 0
-		for scanner.Scan() {
-			select {
-			case <-s.done:
+
+		for {
+			entry, err := reader.Next()
+			if err != nil {
+				if err != io.EOF {
+					select {
+					case errc <- err:
+					default:
+					}
+				}
 				return
-			default:
 			}
 
-			entry := logentry.Parse(scanner.Text())
-			if entry == nil {
-				continue
-			}
 			entry.Index = index
 			index++
 
 			select {
 			case entries <- entry:
-			case <-s.done:
+			case <-done:
 				return
-			}
-		}
-
-		if err := scanner.Err(); err != nil {
-			select {
-			case errc <- err:
-			default:
 			}
 		}
 	}()
